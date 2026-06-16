@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
-const displayNameWarningText = "For best results, enter both Discord display names. If these are blank, speaker detection may be less accurate.";
+const displayNameWarningText = "For best results, enter Your Discord Name and Other Person's Name. If these are blank, speaker detection may be less accurate.";
 const everythingText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
 const dateRangeText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
 const openDiscordManuallyText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START again.";
@@ -26,8 +26,7 @@ const fields = {
   startDate: document.querySelector("#start-date"),
   endDate: document.querySelector("#end-date"),
   everythingMode: document.querySelector("#everything-mode"),
-  includeTimestamps: document.querySelector("#include-timestamps"),
-  ignoreReactions: document.querySelector("#ignore-reactions")
+  includeTimestamps: document.querySelector("#include-timestamps")
 };
 const statusEl = document.querySelector("#status");
 const instructionsEl = document.querySelector("#mode-instructions");
@@ -96,6 +95,7 @@ form.addEventListener("submit", async (event) => {
     const response = await showOverlayOnTab(tab.id);
     if (response?.ok) {
       statusEl.textContent = "Recording overlay opened on Discord.";
+      window.close();
       return;
     }
     statusEl.textContent = response?.error || "Could not open the recording overlay on Discord.";
@@ -160,7 +160,6 @@ function updateValidation() {
   fields.endDate.disabled = everything;
   fields.startDate.required = !everything;
   fields.endDate.required = !everything;
-  fields.ignoreReactions.checked = true;
   instructionsEl.textContent = everything ? everythingText : dateRangeText;
   dateWarningEl.classList.toggle("hidden", !datesMissing);
   displayNameWarningEl.classList.toggle("hidden", !displayNamesMissing);

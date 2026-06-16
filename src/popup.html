@@ -20,12 +20,12 @@
         <p>This extension is designed only for one-on-one DMs.<br>It does not support server channels, group chats, threads, forums, or voice channels.</p>
       </section>
       <form id="settings-form">
-        <label>Self export label<input id="self-label" type="text" maxlength="40" required></label>
-        <label>Other person export label<input id="other-label" type="text" maxlength="40" required></label>
-        <label>Your Discord display name <span>(strongly recommended)</span><input id="self-display-name" type="text" maxlength="80" placeholder="JOHN"></label>
-        <label>Other Discord display name <span>(strongly recommended)</span><input id="other-display-name" type="text" maxlength="80" placeholder="JANE"></label>
+        <label>The Name You Want On The Log For Yourself<input id="self-label" type="text" maxlength="40" required></label>
+        <label>The Name You Want On The Log For The Other Person<input id="other-label" type="text" maxlength="40" required></label>
+        <label>Your Discord Name <span>(strongly recommended)</span><input id="self-display-name" type="text" maxlength="80" placeholder="john_example"></label>
+        <label>Other Person's Name <span>(strongly recommended)</span><input id="other-display-name" type="text" maxlength="80" placeholder="jane_example"></label>
         <section id="display-name-warning" class="warning hidden">
-          For best results, enter both Discord display names. If these are blank, speaker detection may be less accurate.
+          For best results, enter Your Discord Name and Other Person's Name. If these are blank, speaker detection may be less accurate.
         </section>
         <div class="dates">
           <label>Start date<input id="start-date" type="date"></label>
@@ -36,7 +36,7 @@
           Date Range mode requires both a start date and an end date.<br><br>Choose both dates, or check EVERYTHING.
         </section>
         <label class="checkbox"><input id="include-timestamps" type="checkbox"> Include timestamps</label>
-        <label class="checkbox"><input id="ignore-reactions" type="checkbox" checked disabled> Ignore reactions (always on in v1)</label>
+        <p class="plain-note">No Reactions Included</p>
         <div id="mode-instructions" class="instructions"></div>
         <button id="start" type="submit">START</button>
       </form>

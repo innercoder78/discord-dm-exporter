@@ -11,9 +11,10 @@ label { display: block; font-weight: 700; margin: 10px 0; }
 label span { font-weight: 400; color: #5b6475; }
 input[type="text"], input[type="date"] { box-sizing: border-box; width: 100%; margin-top: 4px; padding: 8px; border: 1px solid #b8c0d4; border-radius: 6px; }
 .checkbox { display: flex; gap: 8px; align-items: center; font-weight: 700; }
+.plain-note { margin: 10px 0 12px; color: #5b6475; font-size: 12px; }
 .dates { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 button { width: 100%; border: 0; border-radius: 8px; padding: 10px; margin-top: 8px; color: white; background: #5865f2; cursor: pointer; font-weight: 700; }
 button.secondary { background: #3b4252; }
 button:disabled { cursor: not-allowed; opacity: .6; }
 #status { min-height: 18px; font-weight: 700; }
-@media (prefers-color-scheme: dark) { body { background: #1e1f22; color: #f4f5f7; } .notice { background: #222a44; } .warning { background: #3b2a16; } .instructions { background: #12343b; } input { background: #2b2d31; color: #fff; } }
+@media (prefers-color-scheme: dark) { body { background: #1e1f22; color: #f4f5f7; } .notice { background: #222a44; } .warning { background: #3b2a16; } .instructions { background: #12343b; } .plain-note { color: #c9ceda; } input { background: #2b2d31; color: #fff; } }
