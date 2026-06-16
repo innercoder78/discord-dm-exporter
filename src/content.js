@@ -99,10 +99,16 @@
   function handleStorageChange(changes, area) {
     if (area !== "local") return;
     if (changes.settings) settings = normalizeSettings(changes.settings.newValue);
-    if (changes.messages) messages = changes.messages.newValue || [];
+    if (changes.messages) {
+      messages = changes.messages.newValue || [];
+      if (recordingState === "recording") {
+        messages.forEach((message) => seenKeys.add(messageKey(message)));
+      } else {
+        seenKeys = new Set(messages.map(messageKey));
+      }
+    }
     if (changes.recordingState) recordingState = changes.recordingState.newValue || "idle";
     if (changes.captureCounter) captureCounter = Number(changes.captureCounter.newValue || 0);
-    seenKeys = new Set(messages.map(messageKey));
     if (changes.recordingState) {
       if (recordingState === "recording") startMessageObserver();
       else stopMessageObserver();
@@ -256,7 +262,7 @@
 
     if (recordingState === "recording") {
       const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
-      updateOverlayBody(body, `<h2>Recording…</h2><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
+      updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
     } else if (recordingState === "stopped") {
       updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
@@ -265,7 +271,7 @@
 
 Are you in the position where recording should begin?
 
-Make sure you have manually scrolled to the first message you want this recording session to consider.</p><p>${modeConfirmationText()}</p>${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
+Make sure you have manually scrolled to the first message you want this recording session to consider.</p><p class="warn">After you click Start Recording, scroll down manually through the conversation until you reach the last message you want to capture.</p><p>${modeConfirmationText()}</p>${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
     }
   }
 
@@ -312,19 +318,34 @@ Make sure you have manually scrolled to the first message you want this recordin
       await chrome.storage.local.set({ recordingState: "stopped" });
       renderOverlay();
     }
-    if (action === "clear" || action === "cancel") {
-      messages = [];
-      seenKeys.clear();
-      seenObservedKeys.clear();
-      skippedUnknownKeys.clear();
-      overlayVisible = false;
-      recordingState = "idle";
-      captureCounter = 0;
-      stopMessageObserver();
-      await chrome.storage.local.set({ messages: [], captureCounter: 0, recordingState: "idle" });
+    if (action === "clear") {
+      await resetRecordingSession({ clearMessages: true });
+    }
+    if (action === "cancel") {
+      await resetRecordingSession({ clearMessages: false });
     }
     if (action === "export") exportTranscript();
     if (action === "accept-unknown") { unknownWarningAccepted = true; scheduleCapture(); renderOverlay(); }
+  }
+
+  async function resetRecordingSession({ clearMessages }) {
+    stopMessageObserver();
+    if (clearMessages) messages = [];
+    seenKeys.clear();
+    seenObservedKeys.clear();
+    skippedUnknownKeys.clear();
+    overlayVisible = false;
+    recordingState = "idle";
+    totalSeen = 0;
+    captureCounter = 0;
+    lastSpeaker = "UNKNOWN";
+    lastIsoDate = "";
+    unknownWarningAccepted = false;
+    unknownSkipped = 0;
+    const updates = { captureCounter: 0, recordingState: "idle" };
+    if (clearMessages) updates.messages = [];
+    await chrome.storage.local.set(updates);
+    renderOverlay();
   }
 
   function modeConfirmationText() {
@@ -386,8 +407,41 @@ Make sure you have manually scrolled to the first message you want this recordin
     if (!body) return null;
     if (speaker) lastSpeaker = speaker;
     if (isoDate) lastIsoDate = isoDate;
-    const id = node.id || node.getAttribute("data-list-item-id") || "";
-    return { id, speaker, text: body, isoDate: isoDate || lastIsoDate, hasExactTimestamp, domIndex };
+    const id = getStableMessageId(node);
+    const effectiveIsoDate = isoDate || lastIsoDate;
+    const key = buildDeduplicationKey({ id, speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, markers });
+    return { id, deduplicationKey: key, speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, domIndex };
+  }
+
+  function getStableMessageId(node) {
+    const attributes = [
+      node.id,
+      node.getAttribute("data-list-item-id"),
+      node.getAttribute("data-message-id"),
+      node.getAttribute("data-item-id"),
+      node.getAttribute("aria-labelledby"),
+      node.querySelector("[data-list-item-id]")?.getAttribute("data-list-item-id"),
+      node.querySelector("[data-message-id]")?.getAttribute("data-message-id"),
+      node.querySelector("[id]")?.id
+    ].filter(Boolean);
+
+    for (const value of attributes) {
+      const match = String(value).match(/(?:chat-messages-|message-)?(\d{15,25})(?:\b|$)/);
+      if (match) return `discord:${match[1]}`;
+    }
+    return "";
+  }
+
+  function buildDeduplicationKey({ id, speaker, text, isoDate, hasExactTimestamp, markers }) {
+    if (id) return id;
+    const normalizedText = normalizeMessageText(text);
+    const markerText = markers.join("|");
+    const datePart = hasExactTimestamp && isoDate ? `exact:${isoDate}` : `fallback:${calendarDay(isoDate) || isoDate || "unknown-date"}`;
+    return ["fallback", speaker || "UNKNOWN", datePart, normalizedText, markerText].join("|");
+  }
+
+  function normalizeMessageText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
   }
 
   function getAuthor(node) {
@@ -489,7 +543,14 @@ Make sure you have manually scrolled to the first message you want this recordin
   }
 
   function messageKey(message) {
-    return message.id || [message.speaker, message.isoDate, message.text].join("|");
+    return message.deduplicationKey || message.id || buildDeduplicationKey({
+      id: "",
+      speaker: message.speaker,
+      text: message.text,
+      isoDate: message.isoDate,
+      hasExactTimestamp: message.hasExactTimestamp,
+      markers: []
+    });
   }
 
   function exportTranscript() {
