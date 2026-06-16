@@ -47,18 +47,16 @@ It does not support server channels, group chats, threads, forums, or voice chan
 
 ## Usage
 
-1. Open the extension popup.
-2. Set your export labels. Defaults are `ME` and `FRIEND`.
-3. Enter both Discord display names, such as `john_example` and `jane_example`, for the most reliable speaker detection. Export labels remain separate from Discord display names.
-4. Choose Date Range mode by setting both a start date and an end date, or check **EVERYTHING**. The popup will not save Date Range settings unless both dates are present.
-5. Click **Save Settings**.
-6. Click **Go to Discord Web**.
-7. Manually open the correct one-on-one DM in Discord Web.
-8. Follow the overlay instructions:
-   - In Date Range mode, scroll up to the start-date area, ideally a few messages before that date.
-   - In EVERYTHING mode, scroll up to the first day of the conversation. EVERYTHING is the only mode designed to capture all loaded messages.
-9. Click **Start Recording** in the overlay.
-10. Manually scroll downward through the conversation.
+1. Open Discord Web manually.
+2. Open the correct one-on-one DM manually.
+3. Scroll to the desired starting position manually.
+4. Open the extension popup.
+5. Set your export labels. Defaults are `ME` and `FRIEND`.
+6. Enter both Discord display names, such as `JOHN` and `JANE`, for the most reliable speaker detection. Export labels remain separate from Discord display names.
+7. Configure settings: choose Date Range mode by setting both a start date and an end date, or check **EVERYTHING**. START is disabled for Date Range mode unless both dates are present.
+8. Click **START**.
+9. Confirm on the Discord page overlay that you are at the right starting position. Recording begins only after you click **Start Recording** in the overlay.
+10. Manually scroll downward through the conversation while recording.
 11. Click **Stop Recording**.
 12. Click **Export TXT**.
 13. Clear captured data from the overlay when finished.

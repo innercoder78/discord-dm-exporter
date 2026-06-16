@@ -22,25 +22,24 @@
       <form id="settings-form">
         <label>Self export label<input id="self-label" type="text" maxlength="40" required></label>
         <label>Other person export label<input id="other-label" type="text" maxlength="40" required></label>
-        <label>Your Discord display name <span>(strongly recommended)</span><input id="self-display-name" type="text" maxlength="80" placeholder="john_example"></label>
-        <label>Other Discord display name <span>(strongly recommended)</span><input id="other-display-name" type="text" maxlength="80" placeholder="jane_example"></label>
+        <label>Your Discord display name <span>(strongly recommended)</span><input id="self-display-name" type="text" maxlength="80" placeholder="JOHN"></label>
+        <label>Other Discord display name <span>(strongly recommended)</span><input id="other-display-name" type="text" maxlength="80" placeholder="JANE"></label>
         <section id="display-name-warning" class="warning hidden">
           For best results, enter both Discord display names. If these are blank, speaker detection may be less accurate.
         </section>
-        <label class="checkbox"><input id="everything-mode" type="checkbox"> EVERYTHING</label>
         <div class="dates">
           <label>Start date<input id="start-date" type="date"></label>
           <label>End date<input id="end-date" type="date"></label>
         </div>
+        <label class="checkbox"><input id="everything-mode" type="checkbox"> EVERYTHING</label>
         <section id="date-warning" class="warning hidden">
           Date Range mode requires both a start date and an end date.<br><br>Choose both dates, or check EVERYTHING.
         </section>
         <label class="checkbox"><input id="include-timestamps" type="checkbox"> Include timestamps</label>
         <label class="checkbox"><input id="ignore-reactions" type="checkbox" checked disabled> Ignore reactions (always on in v1)</label>
         <div id="mode-instructions" class="instructions"></div>
-        <button id="save-settings" type="submit">Save Settings</button>
+        <button id="start" type="submit">START</button>
       </form>
-      <button id="go-discord" class="secondary">Go to Discord Web</button>
       <p id="status" role="status"></p>
     </main>
     <script src="popup.js"></script>

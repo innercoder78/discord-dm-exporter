@@ -28,12 +28,6 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "OPEN_DISCORD_WEB") {
-    chrome.tabs.create({ url: "https://discord.com/channels/@me" });
-    sendResponse({ ok: true });
-    return true;
-  }
-
   if (message?.type === "DOWNLOAD_TRANSCRIPT") {
     downloadTranscript(message.text || "", message.filename || defaultFilename())
       .then(() => sendResponse({ ok: true }))
