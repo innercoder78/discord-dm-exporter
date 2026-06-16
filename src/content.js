@@ -18,7 +18,7 @@
   const overlayId = "discord-dm-log-exporter-overlay";
   const unsupportedText = "This extension is designed only for one-on-one Discord DMs.\n\nServer channels, group chats, threads, forums, and voice channels are not supported.";
   const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
-  const unknownWarningText = "Some loaded messages cannot be confidently mapped to either configured Discord display name. UNKNOWN messages are skipped in Date Range mode unless you explicitly continue.";
+  const unknownWarningText = "Some loaded messages cannot be confidently mapped to either configured Discord name. UNKNOWN messages are skipped in Date Range mode unless you explicitly continue.";
   let settings = DEFAULT_SETTINGS;
   let messages = [];
   let recordingState = "idle";
@@ -233,7 +233,7 @@
       overlay.id = overlayId;
       overlay.innerHTML = `<style>
         #${overlayId}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:340px;background:#1f2330;color:#fff;border:1px solid #5865f2;border-radius:12px;box-shadow:0 10px 30px #0008;font:14px/1.4 Arial,sans-serif;padding:14px}
-        #${overlayId} h2{font-size:16px;margin:0 0 8px} #${overlayId} p{margin:7px 0;white-space:pre-line} #${overlayId} button{border:0;border-radius:7px;padding:8px 10px;margin:6px 6px 0 0;background:#5865f2;color:#fff;font-weight:700;cursor:pointer} #${overlayId} button.secondary{background:#4b5563} #${overlayId} button.danger{background:#b91c1c} #${overlayId} .warn{background:#3b2a16;border:1px solid #fdba74;border-radius:8px;padding:8px} #${overlayId} input{box-sizing:border-box;width:100%;border:1px solid #94a3b8;border-radius:7px;padding:8px;margin:4px 0 8px;background:#fff;color:#111827} #${overlayId} label{display:block;font-weight:700;margin-top:8px}
+        #${overlayId} h2{font-size:16px;margin:0 0 8px} #${overlayId} p{margin:7px 0;white-space:pre-line} #${overlayId} button{border:0;border-radius:7px;padding:8px 10px;margin:6px 6px 0 0;background:#5865f2;color:#fff;font-weight:700;cursor:pointer} #${overlayId} button.secondary{background:#4b5563} #${overlayId} button.danger{background:#b91c1c} #${overlayId} .warn{background:#3b2a16;border:1px solid #fdba74;border-radius:8px;padding:8px} #${overlayId} label{display:block;font-weight:700;margin-top:8px}
       </style><div data-body></div>`;
       document.body.appendChild(overlay);
       lastOverlaySignature = "";
@@ -250,15 +250,15 @@
 
     const mode = settings.everythingMode ? "EVERYTHING" : "Date Range";
     const range = settings.everythingMode ? "" : `<p>Date range: ${settings.startDate || "not set"} to ${settings.endDate || "not set"}</p>`;
-    const mapping = `<p>Labels: self = ${escapeHtml(settings.selfLabel)}, other = ${escapeHtml(settings.otherLabel)}</p><p>Display-name hints: self = ${escapeHtml(settings.selfDisplayName || "not set")}, other = ${escapeHtml(settings.otherDisplayName || "not set")}</p>`;
-    const displayNameWarning = (!settings.selfDisplayName || !settings.otherDisplayName) ? `<p class="warn">For best results, enter both Discord display names. If these are blank, speaker detection may be less accurate.</p>` : "";
+    const mapping = `<p>Log labels: self = ${escapeHtml(settings.selfLabel)}, other = ${escapeHtml(settings.otherLabel)}</p><p>Discord names: self = ${escapeHtml(settings.selfDisplayName || "not set")}, other = ${escapeHtml(settings.otherDisplayName || "not set")}</p>`;
+    const displayNameWarning = (!settings.selfDisplayName || !settings.otherDisplayName) ? `<p class="warn">For best results, enter Your Discord Name and Other Person's Name. If these are blank, speaker detection may be less accurate.</p>` : "";
     const dateWarning = !hasRequiredDates() ? `<p class="warn">${missingDatesText}</p>` : "";
 
     if (recordingState === "recording") {
       const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
       updateOverlayBody(body, `<h2>Recording…</h2><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
     } else if (recordingState === "stopped") {
-      updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><label for="discord-dm-log-exporter-filename">File name</label><input id="discord-dm-log-exporter-filename" data-role="filename" type="text" value="${escapeHtml(exportFilename)}"><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
+      updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
       const disabled = hasRequiredDates() ? "" : "disabled";
       updateOverlayBody(body, `<h2>Confirm starting position</h2><p>Ready to record.
@@ -494,14 +494,23 @@ Make sure you have manually scrolled to the first message you want this recordin
 
   function exportTranscript() {
     const transcript = formatTranscript(messages, settings.includeTimestamps);
-    const input = document.querySelector(`#${overlayId} [data-role="filename"]`);
-    exportFilename = sanitizeFilename(input?.value || defaultFilename());
-    if (input) input.value = exportFilename;
-    chrome.runtime.sendMessage({ type: "DOWNLOAD_TRANSCRIPT", text: transcript, filename: exportFilename }, (response) => {
+    exportFilename = defaultFilename();
+    chrome.runtime.sendMessage({ type: "DOWNLOAD_TRANSCRIPT", text: transcript, filename: exportFilename }, async (response) => {
       const lastError = chrome.runtime.lastError;
       if (lastError || response?.ok === false) {
         showOverlayMessage(`Export failed: ${response?.error || lastError?.message || "Unknown download error."}`);
+        return;
       }
+      messages = [];
+      seenKeys.clear();
+      seenObservedKeys.clear();
+      skippedUnknownKeys.clear();
+      overlayVisible = false;
+      recordingState = "idle";
+      captureCounter = 0;
+      stopMessageObserver();
+      await chrome.storage.local.set({ messages: [], captureCounter: 0, recordingState: "idle" });
+      renderOverlay();
     });
   }
 
@@ -509,15 +518,6 @@ Make sure you have manually scrolled to the first message you want this recordin
     return `discord-dm-log-${new Date().toISOString().slice(0, 10)}.txt`;
   }
 
-  function sanitizeFilename(value) {
-    const sanitized = String(value)
-      .trim()
-      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
-      .replace(/\.+$/g, "")
-      .replace(/\s+/g, " ");
-    const withName = sanitized || defaultFilename();
-    return withName.toLowerCase().endsWith(".txt") ? withName : `${withName}.txt`;
-  }
 
   function showOverlayMessage(text) {
     const overlay = document.getElementById(overlayId);
