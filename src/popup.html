@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Discord DM Log Exporter</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup">
+      <h1>Discord DM Log Exporter</h1>
+      <section id="tab-warning" class="warning hidden">
+        <strong>Discord Web is not open.</strong>
+        <p>This extension only works on https://discord.com in Chrome.<br>Open Discord Web to continue.</p>
+      </section>
+      <section class="notice">
+        <strong>Compatibility:</strong>
+        <p>This extension only works with Discord Web in Chrome.<br>It does not work with the Discord desktop app, mobile app, or tablet app.</p>
+        <strong>Scope:</strong>
+        <p>This extension is designed only for one-on-one DMs.<br>It does not support server channels, group chats, threads, forums, or voice channels.</p>
+      </section>
+      <form id="settings-form">
+        <label>Self export label<input id="self-label" type="text" maxlength="40" required></label>
+        <label>Other person export label<input id="other-label" type="text" maxlength="40" required></label>
+        <label>Your Discord display name <span>(optional)</span><input id="self-display-name" type="text" maxlength="80" placeholder="john_example"></label>
+        <label>Other Discord display name <span>(optional)</span><input id="other-display-name" type="text" maxlength="80" placeholder="jane_example"></label>
+        <label class="checkbox"><input id="everything-mode" type="checkbox"> EVERYTHING</label>
+        <div class="dates">
+          <label>Start date<input id="start-date" type="date"></label>
+          <label>End date<input id="end-date" type="date"></label>
+        </div>
+        <label class="checkbox"><input id="include-timestamps" type="checkbox"> Include timestamps</label>
+        <label class="checkbox"><input id="ignore-reactions" type="checkbox" checked> Ignore reactions</label>
+        <div id="mode-instructions" class="instructions"></div>
+        <button type="submit">Save Settings</button>
+      </form>
+      <button id="go-discord" class="secondary">Go to Discord Web</button>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
