@@ -141,3 +141,33 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Exported chat logs and private transcripts
+*.txt
+*.log
+logs/
+exports/
+transcripts/
+chat-logs/
+discord-logs/
+
+# Local/private configuration
+.env
+.env.*
+*.local
+local-settings.json
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+
+# Node or package manager files, in case they are created later
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

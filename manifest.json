@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Discord DM Log Exporter",
+  "description": "Local-only exporter for one-on-one Discord Web DMs into clean TXT transcripts.",
+  "version": "1.0.0",
+  "action": {
+    "default_title": "Discord DM Log Exporter",
+    "default_popup": "src/popup.html"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://discord.com/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["activeTab", "downloads", "storage", "tabs"],
+  "host_permissions": ["https://discord.com/*"]
+}
