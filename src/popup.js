@@ -12,10 +12,10 @@ const DEFAULT_SETTINGS = {
 };
 
 const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
-const displayNameWarningText = "For best results, enter Your Discord Name and Other Person's Name. If these are blank, speaker detection may be less accurate.";
-const everythingText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
-const dateRangeText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
-const openDiscordManuallyText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START again.";
+const displayNameWarningText = "For best results, enter both Discord display names without server tags. If these are blank, speaker detection may be less accurate.";
+const everythingText = "Open the DM you want to log, scroll to where you want recording to begin, then click START.";
+const dateRangeText = "Open the DM you want to log, scroll to where you want recording to begin, then click START.";
+const openDiscordManuallyText = "Open the DM you want to log, scroll to where you want recording to begin, then click START again.";
 
 const form = document.querySelector("#settings-form");
 const fields = {
