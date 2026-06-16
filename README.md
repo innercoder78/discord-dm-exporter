@@ -10,7 +10,7 @@ All examples in this repository use fictional placeholder names only, such as `J
 - Lets you set separate export labels for yourself and the other person, such as `JOHN` and `JANE`.
 - Lets you enter Discord display names to help identify speakers on the page. Speaker detection works best when both display names are provided.
 - Supports Date Range mode and EVERYTHING mode. Date Range mode requires both a start date and an end date.
-- Watches messages that are already loaded while you manually scroll. EVERYTHING mode is the only mode that intentionally captures every loaded message during recording.
+- Watches messages only while recording, so the extension stays idle before confirmation and after stopping to reduce CPU usage. EVERYTHING mode is the only mode that intentionally captures every loaded message during recording.
 - Exports a grouped `.txt` transcript with optional timestamps.
 - Stores settings and temporary captured messages in `chrome.storage.local`.
 - Downloads the transcript with `chrome.downloads.download`.
@@ -54,12 +54,18 @@ It does not support server channels, group chats, threads, forums, or voice chan
 5. Set your export labels. Defaults are `ME` and `FRIEND`.
 6. Enter both Discord display names, such as `JOHN` and `JANE`, for the most reliable speaker detection. Export labels remain separate from Discord display names.
 7. Configure settings: choose Date Range mode by setting both a start date and an end date, or check **EVERYTHING**. START is disabled for Date Range mode unless both dates are present.
-8. Click **START**.
+8. Click **START**. START should contact or inject the Discord page script on demand and show the overlay without reloading Discord.
 9. Confirm on the Discord page overlay that you are at the right starting position. Recording begins only after you click **Start Recording** in the overlay.
 10. Manually scroll downward through the conversation while recording.
 11. Click **Stop Recording**.
 12. Click **Export TXT**.
 13. Clear captured data from the overlay when finished.
+
+## START and performance notes
+
+- START should work without reloading the Discord page, including when Discord Web was already open before the extension was loaded or updated.
+- If the extension was just updated, wait until Discord is fully loaded and click **START** again if the first attempt cannot start. A page reload should not normally be required.
+- The extension only observes the Discord message list while recording, and it throttles capture work to reduce CPU usage. It does not continuously rescan the page while idle.
 
 ## Export format
 

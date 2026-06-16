@@ -17,6 +17,6 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["activeTab", "downloads", "storage", "tabs"],
+  "permissions": ["activeTab", "downloads", "scripting", "storage", "tabs"],
   "host_permissions": ["https://discord.com/*"]
 }

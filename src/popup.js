@@ -15,7 +15,8 @@ const missingDatesText = "Date Range mode requires both a start date and an end 
 const displayNameWarningText = "For best results, enter both Discord display names. If these are blank, speaker detection may be less accurate.";
 const everythingText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
 const dateRangeText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
-const openDiscordManuallyText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START again.";
+const openDiscordManuallyText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
+const startFailedText = "Could not start the extension on this Discord tab. Make sure the page is fully loaded, then try START again.";
 
 const form = document.querySelector("#settings-form");
 const fields = {
@@ -91,17 +92,29 @@ form.addEventListener("submit", async (event) => {
   }
 
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type: "SHOW_RECORDING_OVERLAY" });
+    const response = await showOverlayOnTab(tab.id);
     if (response?.ok) {
       statusEl.textContent = "Confirm recording from the Discord page overlay.";
       window.close();
     } else {
-      statusEl.textContent = "Could not show the Discord page overlay. Refresh Discord Web, then click START again.";
+      statusEl.textContent = startFailedText;
     }
   } catch (error) {
-    statusEl.textContent = "Could not show the Discord page overlay. Refresh Discord Web, then click START again.";
+    statusEl.textContent = startFailedText;
   }
 });
+
+async function showOverlayOnTab(tabId) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, { type: "SHOW_RECORDING_OVERLAY" });
+  } catch (error) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["src/content.js"]
+    });
+    return chrome.tabs.sendMessage(tabId, { type: "SHOW_RECORDING_OVERLAY" });
+  }
+}
 
 function updateValidation() {
   const everything = fields.everythingMode.checked;
