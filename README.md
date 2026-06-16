@@ -8,9 +8,9 @@ All examples in this repository use fictional placeholder names only, such as `J
 
 - Works on Discord Web at `https://discord.com`.
 - Lets you set separate export labels for yourself and the other person, such as `JOHN` and `JANE`.
-- Optionally lets you enter Discord display names to help identify speakers on the page.
-- Supports Date Range mode and EVERYTHING mode.
-- Watches messages that are already loaded while you manually scroll.
+- Lets you enter Discord display names to help identify speakers on the page. Speaker detection works best when both display names are provided.
+- Supports Date Range mode and EVERYTHING mode. Date Range mode requires both a start date and an end date.
+- Watches messages that are already loaded while you manually scroll. EVERYTHING mode is the only mode that intentionally captures every loaded message during recording.
 - Exports a grouped `.txt` transcript with optional timestamps.
 - Stores settings and temporary captured messages in `chrome.storage.local`.
 - Downloads the transcript with `chrome.downloads.download`.
@@ -24,7 +24,7 @@ All examples in this repository use fictional placeholder names only, such as `J
 - It does not create a self-bot.
 - It does not automate Discord requests or auto-scroll Discord.
 - It does not upload logs anywhere.
-- It does not include emoji reactions, reaction counts, reaction badges, hover buttons, reply/action buttons, or edit/delete controls in v1 exports.
+- It ignores reactions in v1 and does not include emoji reactions, reaction counts, reaction badges, hover buttons, reply/action buttons, or edit/delete controls.
 
 ## Compatibility
 
@@ -49,14 +49,14 @@ It does not support server channels, group chats, threads, forums, or voice chan
 
 1. Open the extension popup.
 2. Set your export labels. Defaults are `ME` and `FRIEND`.
-3. Optionally enter Discord display names, such as `john_example` and `jane_example`, to help map page speakers to export labels.
-4. Choose Date Range mode by setting a start date and end date, or check **EVERYTHING**.
+3. Enter both Discord display names, such as `john_example` and `jane_example`, for the most reliable speaker detection. Export labels remain separate from Discord display names.
+4. Choose Date Range mode by setting both a start date and an end date, or check **EVERYTHING**. The popup will not save Date Range settings unless both dates are present.
 5. Click **Save Settings**.
 6. Click **Go to Discord Web**.
 7. Manually open the correct one-on-one DM in Discord Web.
 8. Follow the overlay instructions:
    - In Date Range mode, scroll up to the start-date area, ideally a few messages before that date.
-   - In EVERYTHING mode, scroll up to the first day of the conversation.
+   - In EVERYTHING mode, scroll up to the first day of the conversation. EVERYTHING is the only mode designed to capture all loaded messages.
 9. Click **Start Recording** in the overlay.
 10. Manually scroll downward through the conversation.
 11. Click **Stop Recording**.
@@ -104,7 +104,7 @@ JANE:
 
 This extension does not upload, transmit, sell, or share your messages.
 All captured messages remain in your browser's local storage until you export or clear them.
-Do not commit exported chat logs to GitHub.
+Do not commit exported chat logs to GitHub. Date Range mode excludes messages outside the selected range; EVERYTHING mode intentionally captures all messages loaded while recording.
 
 ## Public repository safety
 

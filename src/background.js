@@ -7,11 +7,12 @@ const DEFAULT_SETTINGS = {
   endDate: "",
   everythingMode: false,
   includeTimestamps: false,
-  ignoreReactions: true
+  ignoreReactions: true,
+  allowUnknownDateRange: false
 };
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const stored = await chrome.storage.local.get(["settings", "messages", "recordingState"]);
+  const stored = await chrome.storage.local.get(["settings", "messages", "recordingState", "captureCounter"]);
   if (!stored.settings) {
     await chrome.storage.local.set({ settings: DEFAULT_SETTINGS });
   }
@@ -20,6 +21,9 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
   if (!stored.recordingState) {
     await chrome.storage.local.set({ recordingState: "idle" });
+  }
+  if (!stored.captureCounter) {
+    await chrome.storage.local.set({ captureCounter: 0 });
   }
 });
 
