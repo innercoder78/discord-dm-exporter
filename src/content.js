@@ -49,7 +49,7 @@
     messages = stored.messages || [];
     recordingState = stored.recordingState || "idle";
     captureCounter = Number(stored.captureCounter || messages.length || 0);
-    seenKeys = new Set(messages.map(messageKey));
+    seenKeys = new Set(messages.map((message) => messageKey(message)));
     overlayVisible = recordingState === "recording" || recordingState === "stopped";
     registerRuntimeMessageListener();
     registerStorageChangeListener();
@@ -104,7 +104,7 @@
       if (recordingState === "recording") {
         messages.forEach((message) => seenKeys.add(messageKey(message)));
       } else {
-        seenKeys = new Set(messages.map(messageKey));
+        seenKeys = new Set(messages.map((message) => messageKey(message)));
       }
     }
     if (changes.recordingState) recordingState = changes.recordingState.newValue || "idle";
@@ -357,12 +357,15 @@ Make sure you have manually scrolled to the first message you want this recordin
   async function captureLoadedMessages() {
     if (recordingState !== "recording" || !canRecordNow()) return;
     const root = observedMessageContainer || findMessageListContainer() || document;
-    const nodes = [...root.querySelectorAll('[id^="chat-messages-"], [role="article"]')].filter((node) => !isInsideOverlay(node));
+    const nodes = findMessageCandidates(root);
     const newMessages = [];
-    nodes.forEach((node, domIndex) => {
-      const parsed = parseMessage(node, domIndex);
-      if (!parsed) return;
-      const key = messageKey(parsed);
+    const parsedMessages = nodes
+      .map((node, domIndex) => parseMessage(node, domIndex))
+      .filter(Boolean);
+    const suspiciousStableIds = findSuspiciousStableIds(parsedMessages);
+
+    parsedMessages.forEach((parsed) => {
+      const key = messageKey(parsed, suspiciousStableIds);
       if (!seenObservedKeys.has(key)) {
         seenObservedKeys.add(key);
         totalSeen += 1;
@@ -378,7 +381,7 @@ Make sure you have manually scrolled to the first message you want this recordin
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         captureCounter += 1;
-        newMessages.push({ ...parsed, captureIndex: captureCounter });
+        newMessages.push({ ...parsed, deduplicationKey: key, captureIndex: captureCounter });
       }
     });
 
@@ -390,6 +393,66 @@ Make sure you have manually scrolled to the first message you want this recordin
     if (recordingState === "recording" && observedMessageContainer && !document.contains(observedMessageContainer)) {
       startMessageObserver();
     }
+  }
+
+  function findMessageCandidates(root) {
+    const primarySelectors = [
+      'li[id^="chat-messages-"]',
+      '[data-list-item-id^="chat-messages-"]',
+      '[data-list-item-id*="chat-messages"]',
+      '[role="article"][id^="chat-messages-"]',
+      '[role="article"][data-list-item-id]',
+      '[role="article"]'
+    ];
+    let candidates = uniqueElements(primarySelectors.flatMap((selector) => [...root.querySelectorAll(selector)]))
+      .map(normalizeMessageCandidate)
+      .filter(Boolean);
+    candidates = uniqueElements(candidates).filter(isValidMessageCandidate);
+
+    const messageLikeDescendants = countMessageLikeDescendants(root);
+    if (candidates.length <= 1 && messageLikeDescendants > candidates.length + 1) {
+      const fallback = uniqueElements([
+        ...root.querySelectorAll('li[id^="chat-messages-"], li[data-list-item-id*="chat-messages"]'),
+        ...root.querySelectorAll('[class*="messageListItem"], [class*="messageListItem_"]'),
+        ...root.querySelectorAll('[class*="messageContent"]')
+          .map((node) => node.closest('li[id^="chat-messages-"], li[data-list-item-id], [role="article"], [class*="messageListItem"]'))
+      ]).filter(Boolean);
+      candidates = uniqueElements([...candidates, ...fallback.map(normalizeMessageCandidate)])
+        .filter(isValidMessageCandidate);
+    }
+
+    return candidates;
+  }
+
+  function uniqueElements(elements) {
+    return [...new Set(elements.filter(Boolean))];
+  }
+
+  function normalizeMessageCandidate(node) {
+    if (!node || isInsideOverlay(node)) return null;
+    return node.closest?.('li[id^="chat-messages-"], li[data-list-item-id*="chat-messages"], [role="article"][id^="chat-messages-"], [role="article"][data-list-item-id], [role="article"], [class*="messageListItem"]') || node;
+  }
+
+  function isValidMessageCandidate(node) {
+    if (!node || isInsideOverlay(node) || isReactionOrControl(node)) return false;
+    if (node.matches('[data-list-id="chat-messages"], [role="log"], main, ol') && !node.matches('li, [role="article"]')) return false;
+    return Boolean(node.querySelector('time[datetime], [class*="messageContent"], a[href*="cdn.discordapp.com"], [class*="attachment"], [class*="voiceMessage"], [aria-label*="Voice message" i]'));
+  }
+
+  function countMessageLikeDescendants(root) {
+    return uniqueElements([...root.querySelectorAll('[class*="messageContent"], time[datetime], li[id^="chat-messages-"], [data-list-item-id*="chat-messages"]')])
+      .filter((node) => !isInsideOverlay(node)).length;
+  }
+
+  function findSuspiciousStableIds(parsedMessages) {
+    const fingerprintsById = new Map();
+    parsedMessages.forEach((message) => {
+      if (!message.id) return;
+      const fingerprints = fingerprintsById.get(message.id) || new Set();
+      fingerprints.add(message.fallbackDeduplicationKey);
+      fingerprintsById.set(message.id, fingerprints);
+    });
+    return new Set([...fingerprintsById].filter(([, fingerprints]) => fingerprints.size > 1).map(([id]) => id));
   }
 
   function parseMessage(node, domIndex) {
@@ -409,35 +472,47 @@ Make sure you have manually scrolled to the first message you want this recordin
     if (isoDate) lastIsoDate = isoDate;
     const id = getStableMessageId(node);
     const effectiveIsoDate = isoDate || lastIsoDate;
-    const key = buildDeduplicationKey({ id, speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, markers });
-    return { id, deduplicationKey: key, speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, domIndex };
+    const fallbackDeduplicationKey = buildFallbackDeduplicationKey({ speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, markers });
+    const key = id || fallbackDeduplicationKey;
+    return { id, deduplicationKey: key, fallbackDeduplicationKey, speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, domIndex };
   }
 
   function getStableMessageId(node) {
     const attributes = [
-      node.id,
-      node.getAttribute("data-list-item-id"),
-      node.getAttribute("data-message-id"),
-      node.getAttribute("data-item-id"),
-      node.getAttribute("aria-labelledby"),
-      node.querySelector("[data-list-item-id]")?.getAttribute("data-list-item-id"),
-      node.querySelector("[data-message-id]")?.getAttribute("data-message-id"),
-      node.querySelector("[id]")?.id
-    ].filter(Boolean);
+      { name: "id", value: node.id },
+      { name: "data-list-item-id", value: node.getAttribute("data-list-item-id") },
+      { name: "data-message-id", value: node.getAttribute("data-message-id") },
+      { name: "data-item-id", value: node.getAttribute("data-item-id") },
+      { name: "descendant-data-list-item-id", value: node.querySelector("[data-list-item-id*='chat-messages']")?.getAttribute("data-list-item-id") },
+      { name: "descendant-data-message-id", value: node.querySelector("[data-message-id]")?.getAttribute("data-message-id") }
+    ].filter((attribute) => attribute.value);
 
-    for (const value of attributes) {
-      const match = String(value).match(/(?:chat-messages-|message-)?(\d{15,25})(?:\b|$)/);
-      if (match) return `discord:${match[1]}`;
+    for (const attribute of attributes) {
+      const id = messageSpecificSnowflake(attribute.value, attribute.name);
+      if (id) return `discord:${id}`;
     }
     return "";
   }
 
+  function messageSpecificSnowflake(value, attributeName) {
+    const text = String(value || "");
+    const chatMessageMatch = text.match(/chat-messages-(\d{15,25})-(\d{15,25})/);
+    if (chatMessageMatch) return chatMessageMatch[2];
+    const explicitMessageMatch = text.match(/(?:^|[^a-z])message-(\d{15,25})(?:\b|$)/i);
+    if (explicitMessageMatch) return explicitMessageMatch[1];
+    if (/^\d{15,25}$/.test(text) && /data-message-id$/.test(attributeName)) return text;
+    return "";
+  }
+
   function buildDeduplicationKey({ id, speaker, text, isoDate, hasExactTimestamp, markers }) {
-    if (id) return id;
+    return id || buildFallbackDeduplicationKey({ speaker, text, isoDate, hasExactTimestamp, markers });
+  }
+
+  function buildFallbackDeduplicationKey({ speaker, text, isoDate, hasExactTimestamp, markers }) {
     const normalizedText = normalizeMessageText(text);
     const markerText = markers.join("|");
     const datePart = hasExactTimestamp && isoDate ? `exact:${isoDate}` : `fallback:${calendarDay(isoDate) || isoDate || "unknown-date"}`;
-    return ["fallback", speaker || "UNKNOWN", datePart, normalizedText, markerText].join("|");
+    return ["fallback", speaker || "UNKNOWN", datePart, normalizedText || "[no text]", markerText].join("|");
   }
 
   function normalizeMessageText(value) {
@@ -542,7 +617,17 @@ Make sure you have manually scrolled to the first message you want this recordin
     return isoDate ? isoDate.slice(0, 10) : "";
   }
 
-  function messageKey(message) {
+  function messageKey(message, suspiciousStableIds = new Set()) {
+    const suspiciousIds = suspiciousStableIds instanceof Set ? suspiciousStableIds : new Set();
+    if (message.id && suspiciousIds.has(message.id)) {
+      return message.fallbackDeduplicationKey || buildFallbackDeduplicationKey({
+        speaker: message.speaker,
+        text: message.text,
+        isoDate: message.isoDate,
+        hasExactTimestamp: message.hasExactTimestamp,
+        markers: []
+      });
+    }
     return message.deduplicationKey || message.id || buildDeduplicationKey({
       id: "",
       speaker: message.speaker,
