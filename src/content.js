@@ -212,7 +212,7 @@
   }
 
   function dmErrorText(reason) {
-    if (reason === "not-discord") return "Open Discord Web manually, open the correct one-on-one DM, then click START again.";
+    if (reason === "not-discord") return "Open the DM you want to log, scroll to where you want recording to begin, then click START.";
     if (reason === "unsupported-path") return "Open a one-on-one Discord DM before starting. Server channels, group chats, threads, forums, and voice channels are not supported.";
     if (reason === "group-dm") return "This appears to be a group DM. Open a one-on-one Discord DM before starting.";
     return "Could not confirm this page is a one-on-one Discord DM. Wait for Discord to finish loading, then click START again.";
@@ -257,8 +257,9 @@
     const mode = settings.everythingMode ? "EVERYTHING" : "Date Range";
     const range = settings.everythingMode ? "" : `<p>Date range: ${settings.startDate || "not set"} to ${settings.endDate || "not set"}</p>`;
     const mapping = `<p>Log labels: self = ${escapeHtml(settings.selfLabel)}, other = ${escapeHtml(settings.otherLabel)}</p><p>Discord names: self = ${escapeHtml(settings.selfDisplayName || "not set")}, other = ${escapeHtml(settings.otherDisplayName || "not set")}</p>`;
-    const displayNameWarning = (!settings.selfDisplayName || !settings.otherDisplayName) ? `<p class="warn">For best results, enter Your Discord Name and Other Person's Name. If these are blank, speaker detection may be less accurate.</p>` : "";
+    const displayNameWarning = (!settings.selfDisplayName || !settings.otherDisplayName) ? `<p class="warn">For best results, enter both Discord display names without server tags. If these are blank, speaker detection may be less accurate.</p>` : "";
     const dateWarning = !hasRequiredDates() ? `<p class="warn">${missingDatesText}</p>` : "";
+    const everythingNote = settings.everythingMode ? `<p class="warn">EVERYTHING mode records every loaded message it sees while recording. If you need exact start and end boundaries, use Date Range. Otherwise, you may need to manually trim a few extra lines from the TXT file afterward.</p>` : "";
 
     if (recordingState === "recording") {
       const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
@@ -267,11 +268,7 @@
       updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
       const disabled = hasRequiredDates() ? "" : "disabled";
-      updateOverlayBody(body, `<h2>Confirm starting position</h2><p>Ready to record.
-
-Are you in the position where recording should begin?
-
-Make sure you have manually scrolled to the first message you want this recording session to consider.</p><p class="warn">After you click Start Recording, scroll down manually through the conversation until you reach the last message you want to capture.</p><p>${modeConfirmationText()}</p>${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
+      updateOverlayBody(body, `<h2>Confirm starting position</h2><p>After you click Start Recording, scroll manually through the DM. Messages are captured as Discord loads them.</p><p>For the cleanest log, start where you want the log to begin and scroll down until you reach the point where you want it to end.</p><p>${modeConfirmationText()}</p>${everythingNote}${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
     }
   }
 
@@ -350,7 +347,7 @@ Make sure you have manually scrolled to the first message you want this recordin
 
   function modeConfirmationText() {
     return settings.everythingMode
-      ? "EVERYTHING mode is selected.\n\nEverything loaded during this recording session may be exported."
+      ? "EVERYTHING mode is selected."
       : `Date Range mode is selected.\n\nStart date: ${settings.startDate || "not set"}\nEnd date: ${settings.endDate || "not set"}\n\nMessages outside this range will not be exported.`;
   }
 
