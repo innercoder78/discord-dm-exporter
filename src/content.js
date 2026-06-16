@@ -26,6 +26,7 @@
   let lastIsoDate = "";
   let unknownWarningAccepted = false;
   let unknownSkipped = 0;
+  let overlayVisible = false;
 
   init();
 
@@ -36,8 +37,18 @@
     recordingState = stored.recordingState || "idle";
     captureCounter = Number(stored.captureCounter || messages.length || 0);
     seenKeys = new Set(messages.map(messageKey));
+    overlayVisible = recordingState === "recording" || recordingState === "stopped";
     renderOverlay();
     observePageChanges();
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type === "SHOW_RECORDING_OVERLAY") {
+        overlayVisible = true;
+        renderOverlay();
+        sendResponse({ ok: true });
+        return true;
+      }
+      return false;
+    });
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
       if (changes.settings) settings = normalizeSettings(changes.settings.newValue);
@@ -94,6 +105,10 @@
 
   function renderOverlay() {
     let overlay = document.getElementById(overlayId);
+    if (!overlayVisible && recordingState === "idle") {
+      overlay?.remove();
+      return;
+    }
     if (!overlay) {
       overlay = document.createElement("aside");
       overlay.id = overlayId;
@@ -124,7 +139,9 @@
       body.innerHTML = `<h2>Recording stopped.</h2><p>${messages.length} messages ready to export.</p><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`;
     } else {
       const disabled = hasRequiredDates() ? "" : "disabled";
-      body.innerHTML = `<h2>Discord DM Log Exporter</h2><p>Current mode: ${mode}</p>${range}${mapping}${displayNameWarning}${dateWarning}<p>${instructionText()}</p><button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`;
+      body.innerHTML = `<h2>Confirm starting position</h2><p>Are you in the position where recording should begin?
+
+Make sure you have manually scrolled to the first message you want this recording session to consider.</p><p>${modeConfirmationText()}</p>${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`;
     }
   }
 
@@ -148,16 +165,17 @@
     if (action === "clear" || action === "cancel") {
       messages = [];
       seenKeys.clear();
+      overlayVisible = false;
       await chrome.storage.local.set({ messages: [], captureCounter: 0, recordingState: "idle" });
     }
     if (action === "export") exportTranscript();
     if (action === "accept-unknown") { unknownWarningAccepted = true; captureLoadedMessages(); renderOverlay(); }
   }
 
-  function instructionText() {
+  function modeConfirmationText() {
     return settings.everythingMode
-      ? "Scroll up to the very first day you two started chatting.\n\nOnce the earliest messages are loaded, click ‘Start Recording.’"
-      : "Scroll up to the day you set as the start date.\n\nIdeally, scroll a few messages prior to that date, since sometimes Discord may not expose the exact first message clearly if you start on the exact day.\n\nOnce you are in position, click ‘Start Recording.’";
+      ? "EVERYTHING mode is selected.\n\nEverything loaded during this recording session may be exported."
+      : `Date Range mode is selected.\n\nStart date: ${settings.startDate || "not set"}\nEnd date: ${settings.endDate || "not set"}\n\nMessages outside this range will not be exported.`;
   }
 
   async function captureLoadedMessages() {
