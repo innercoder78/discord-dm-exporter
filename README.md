@@ -11,6 +11,8 @@ All examples in this repository use generic placeholder names only, such as `JOH
 - Popup fields labeled “Your Discord Name” and “Other Person's Name” are used to identify speakers from Discord. Speaker detection works best when both names are provided.
 - Supports Date Range mode and EVERYTHING mode. Date Range mode requires both a start date and an end date.
 - Watches messages only while recording, so the extension stays idle before confirmation and after stopping to reduce CPU usage. EVERYTHING mode is the only mode that intentionally captures every loaded message during recording.
+- Captures only messages that Discord has already loaded into the page. While recording, you must scroll down manually through the conversation so Discord loads the messages you want to export.
+- Deduplicates messages during each recording session so scrolling back and forth over already loaded messages should not create duplicate transcript entries.
 - Exports a grouped `.txt` transcript with optional timestamps.
 - Stores settings and temporary captured messages in `chrome.storage.local`.
 - Downloads the transcript with `chrome.downloads.download` and `saveAs: true` so Chrome opens the Save As dialog. The extension uses a default filename like `discord-dm-log-YYYY-MM-DD.txt`, but you can rename it in that Save As window.
@@ -22,7 +24,7 @@ All examples in this repository use generic placeholder names only, such as `JOH
 - It does not use Discord's private API.
 - It does not use a Discord user token.
 - It does not create a self-bot.
-- It does not automate Discord requests or auto-scroll Discord.
+- It does not automate Discord requests or auto-scroll Discord. You control all scrolling manually.
 - It does not upload logs anywhere.
 - Reactions are not included, and the popup shows this as the informational note “No Reactions Included.” The export does not include emoji reactions, reaction counts, reaction badges, hover buttons, reply/action buttons, or edit/delete controls.
 
@@ -53,8 +55,8 @@ It does not support server channels, group chats, threads, forums, or voice chan
 4. Open the extension popup.
 5. Configure the “The Name You Want On The Log…” fields for transcript names, the “Your Discord Name” and “Other Person's Name” fields for speaker detection from Discord, and Date Range or EVERYTHING. Defaults are `ME` and `FRIEND`; examples should use generic names such as `JOHN`, `JANE`, `john_example`, and `jane_example`.
 6. Click **START**. The popup closes after the Discord overlay opens successfully, and the Discord overlay becomes the main recording window.
-7. Confirm in the Discord page overlay by clicking **Start Recording**. Recording does not begin directly from the popup.
-8. Watch the overlay counter while manually scrolling.
+7. Confirm in the Discord page overlay by clicking **Start Recording**. Recording does not begin directly from the popup. You can click **Cancel** instead to close the ready-to-record overlay without starting recording, saving messages, or changing your popup settings.
+8. Watch the overlay counter while manually scrolling down through the conversation. The extension only captures messages that Discord has loaded into the page; it cannot capture unloaded history or future messages until Discord renders them.
 9. Click **END RECORDING**.
 10. Click **Export TXT**.
 11. Chrome will open a Save As window where you can choose the file name and folder. The default filename is like `discord-dm-log-YYYY-MM-DD.txt`, and you can rename it in the Save As window if you want.
@@ -63,8 +65,10 @@ It does not support server channels, group chats, threads, forums, or voice chan
 
 - START should show the Discord page overlay or a clear popup error. If Discord Web is not the active tab, the popup stays open and tells you to open Discord Web manually, open the correct one-on-one DM, scroll to where recording should begin, and click **START** again. After START succeeds, the popup closes and the Discord overlay remains visible.
 - START should work without reloading the Discord page, including when Discord Web was already open before the extension was loaded or updated.
+- **Cancel** on the ready-to-record overlay closes that overlay, leaves recording idle, keeps your popup settings saved, and lets you click **START** again later for a fresh ready-to-record overlay.
 - If the extension was just updated, wait until Discord is fully loaded and click **START** again if the first attempt cannot start. A page reload should not normally be required.
-- The extension only observes the Discord message list while recording, and it throttles capture work to reduce CPU usage. It does not continuously rescan the page while idle.
+- The extension only observes the Discord message list while recording, and it throttles capture work to reduce CPU usage. It does not continuously rescan the page while idle. It does not use Discord's API and does not auto-scroll; messages are captured as Discord loads them during your manual scrolling.
+- Scrolling back and forth over the same loaded messages should not duplicate the export because messages are deduplicated with Discord message IDs when available and stable fallback keys otherwise.
 - After **END RECORDING**, click **Export TXT**. Export uses Chrome's Save As dialog so you can choose the `.txt` file name and save location. The extension passes a default filename like `discord-dm-log-YYYY-MM-DD.txt`, but you can rename it in Save As.
 - The extension does not automatically choose private folder paths or silently save into a hidden location.
 
@@ -108,7 +112,7 @@ JANE:
 ## Privacy
 
 This extension does not upload, transmit, sell, or share your messages.
-All captured messages remain in your browser's local storage until you export or clear them.
+All captured messages remain in your browser's local storage until you export or clear them. Canceling from the ready-to-record overlay does not start or save a recording.
 Do not commit exported chat logs to GitHub. Date Range mode excludes messages outside the selected range; EVERYTHING mode intentionally captures all messages loaded while recording.
 
 ## Public repository safety
