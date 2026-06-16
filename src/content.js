@@ -69,10 +69,16 @@
     const chatRoot = document.querySelector('[role="log"], [data-list-id="chat-messages"], main');
     const groupIndicators = [
       '[aria-label*="Group DM" i]',
-      '[class*="recipients"]',
-      '[class*="privateChannelRecipientsInviteButtonIcon"]'
+      '[aria-roledescription*="Group DM" i]'
     ];
     if (groupIndicators.some((selector) => document.querySelector(selector))) return { ok: false, reason: "group-dm" };
+
+    const recipientLists = [...document.querySelectorAll('[class*="recipients"], [aria-label*="Recipients" i]')];
+    const hasMultipleVisibleRecipients = recipientLists.some((list) => {
+      const recipientItems = list.querySelectorAll('[role="listitem"], [class*="recipient"], [class*="avatar"]');
+      return recipientItems.length > 1;
+    });
+    if (hasMultipleVisibleRecipients) return { ok: false, reason: "group-dm" };
     if (!chatRoot) return { ok: false, reason: "unknown" };
 
     return { ok: true, reason: "one-on-one-dm", channelId: match[1] };
@@ -181,8 +187,10 @@
   function parseMessage(node, domIndex) {
     if (isReactionOrControl(node)) return null;
     const timestamp = node.querySelector('time[datetime]')?.getAttribute("datetime") || "";
-    const dividerDate = findNearestDateDivider(node);
-    const isoDate = timestamp ? new Date(timestamp).toISOString() : dividerDate;
+    const exactDate = parseExactTimestamp(timestamp);
+    const dividerDate = exactDate ? "" : findNearestDateDivider(node);
+    const isoDate = exactDate || dividerDate;
+    const hasExactTimestamp = Boolean(exactDate);
     const authorText = getAuthor(node);
     const speaker = authorText ? speakerFor(authorText) : lastSpeaker;
     const text = getMessageText(node);
@@ -192,7 +200,7 @@
     if (speaker) lastSpeaker = speaker;
     if (isoDate) lastIsoDate = isoDate;
     const id = node.id || node.getAttribute("data-list-item-id") || "";
-    return { id, speaker, text: body, isoDate: isoDate || lastIsoDate, domIndex };
+    return { id, speaker, text: body, isoDate: isoDate || lastIsoDate, hasExactTimestamp, domIndex };
   }
 
   function getAuthor(node) {
@@ -235,6 +243,12 @@
     return Boolean(node.matches('[class*="reaction"], [aria-label*="reaction" i], [class*="buttons"], [class*="operations"]'));
   }
 
+  function parseExactTimestamp(value) {
+    if (!value) return "";
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? "" : new Date(parsed).toISOString();
+  }
+
   function findNearestDateDivider(node) {
     let previous = node.previousElementSibling;
     while (previous) {
@@ -272,8 +286,19 @@
   }
 
   function compareMessages(a, b) {
-    if (a.isoDate && b.isoDate && a.isoDate !== b.isoDate) return a.isoDate.localeCompare(b.isoDate);
-    return (a.captureIndex ?? a.domIndex ?? 0) - (b.captureIndex ?? b.domIndex ?? 0);
+    const order = (a.captureIndex ?? a.domIndex ?? 0) - (b.captureIndex ?? b.domIndex ?? 0);
+    const aDay = calendarDay(a.isoDate);
+    const bDay = calendarDay(b.isoDate);
+
+    if (aDay && bDay && aDay !== bDay) return aDay.localeCompare(bDay);
+    if (a.hasExactTimestamp && b.hasExactTimestamp && a.isoDate && b.isoDate && a.isoDate !== b.isoDate) {
+      return a.isoDate.localeCompare(b.isoDate);
+    }
+    return order;
+  }
+
+  function calendarDay(isoDate) {
+    return isoDate ? isoDate.slice(0, 10) : "";
   }
 
   function messageKey(message) {
