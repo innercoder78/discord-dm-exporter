@@ -23,6 +23,8 @@
   let messages = [];
   let recordingState = "idle";
   let seenKeys = new Set();
+  let seenObservedKeys = new Set();
+  let skippedUnknownKeys = new Set();
   let totalSeen = 0;
   let captureCounter = 0;
   let lastSpeaker = "UNKNOWN";
@@ -36,6 +38,7 @@
   let captureTimeoutId = extensionState.captureTimeoutId || 0;
   let lastCaptureStartedAt = extensionState.lastCaptureStartedAt || 0;
   let lastOverlaySignature = extensionState.lastOverlaySignature || "";
+  let exportFilename = defaultFilename();
   const minCaptureIntervalMs = 750;
 
   init();
@@ -64,9 +67,22 @@
 
   function handleRuntimeMessage(message, sender, sendResponse) {
     if (message?.type === "SHOW_RECORDING_OVERLAY") {
-      overlayVisible = true;
-      renderOverlay();
-      sendResponse({ ok: true });
+      try {
+        overlayVisible = true;
+        const status = dmStatus();
+        renderOverlay();
+        if (!status.ok) {
+          sendResponse({ ok: false, error: dmErrorText(status.reason) });
+          return true;
+        }
+        if (!document.getElementById(overlayId)) {
+          sendResponse({ ok: false, error: "The recording overlay could not be added to the Discord page." });
+          return true;
+        }
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({ ok: false, error: error?.message || String(error) });
+      }
       return true;
     }
     return false;
@@ -189,6 +205,13 @@
     return { ok: true, reason: "one-on-one-dm", channelId: match[1] };
   }
 
+  function dmErrorText(reason) {
+    if (reason === "not-discord") return "Open Discord Web manually, open the correct one-on-one DM, then click START again.";
+    if (reason === "unsupported-path") return "Open a one-on-one Discord DM before starting. Server channels, group chats, threads, forums, and voice channels are not supported.";
+    if (reason === "group-dm") return "This appears to be a group DM. Open a one-on-one Discord DM before starting.";
+    return "Could not confirm this page is a one-on-one Discord DM. Wait for Discord to finish loading, then click START again.";
+  }
+
   function hasRequiredDates() {
     return settings.everythingMode || Boolean(settings.startDate && settings.endDate);
   }
@@ -210,7 +233,7 @@
       overlay.id = overlayId;
       overlay.innerHTML = `<style>
         #${overlayId}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:340px;background:#1f2330;color:#fff;border:1px solid #5865f2;border-radius:12px;box-shadow:0 10px 30px #0008;font:14px/1.4 Arial,sans-serif;padding:14px}
-        #${overlayId} h2{font-size:16px;margin:0 0 8px} #${overlayId} p{margin:7px 0;white-space:pre-line} #${overlayId} button{border:0;border-radius:7px;padding:8px 10px;margin:6px 6px 0 0;background:#5865f2;color:#fff;font-weight:700;cursor:pointer} #${overlayId} button.secondary{background:#4b5563} #${overlayId} button.danger{background:#b91c1c} #${overlayId} .warn{background:#3b2a16;border:1px solid #fdba74;border-radius:8px;padding:8px}
+        #${overlayId} h2{font-size:16px;margin:0 0 8px} #${overlayId} p{margin:7px 0;white-space:pre-line} #${overlayId} button{border:0;border-radius:7px;padding:8px 10px;margin:6px 6px 0 0;background:#5865f2;color:#fff;font-weight:700;cursor:pointer} #${overlayId} button.secondary{background:#4b5563} #${overlayId} button.danger{background:#b91c1c} #${overlayId} .warn{background:#3b2a16;border:1px solid #fdba74;border-radius:8px;padding:8px} #${overlayId} input{box-sizing:border-box;width:100%;border:1px solid #94a3b8;border-radius:7px;padding:8px;margin:4px 0 8px;background:#fff;color:#111827} #${overlayId} label{display:block;font-weight:700;margin-top:8px}
       </style><div data-body></div>`;
       document.body.appendChild(overlay);
       lastOverlaySignature = "";
@@ -219,8 +242,9 @@
     attachOverlayClickHandler(overlay);
 
     const body = overlay.querySelector("[data-body]");
-    if (!dmStatus().ok) {
-      updateOverlayBody(body, `<h2>Discord DM Log Exporter</h2><p>${unsupportedText}</p>`);
+    const status = dmStatus();
+    if (!status.ok) {
+      updateOverlayBody(body, `<h2>Discord DM Log Exporter</h2><p>${unsupportedText}</p><p class="warn">${dmErrorText(status.reason)}</p>`);
       return;
     }
 
@@ -232,12 +256,14 @@
 
     if (recordingState === "recording") {
       const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
-      updateOverlayBody(body, `<h2>Recording…</h2><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p>${unknownWarning}<button data-action="stop">Stop Recording</button>`);
+      updateOverlayBody(body, `<h2>Recording…</h2><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
     } else if (recordingState === "stopped") {
-      updateOverlayBody(body, `<h2>Recording stopped.</h2><p>${messages.length} messages ready to export.</p><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
+      updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><label for="discord-dm-log-exporter-filename">File name</label><input id="discord-dm-log-exporter-filename" data-role="filename" type="text" value="${escapeHtml(exportFilename)}"><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
       const disabled = hasRequiredDates() ? "" : "disabled";
-      updateOverlayBody(body, `<h2>Confirm starting position</h2><p>Are you in the position where recording should begin?
+      updateOverlayBody(body, `<h2>Confirm starting position</h2><p>Ready to record.
+
+Are you in the position where recording should begin?
 
 Make sure you have manually scrolled to the first message you want this recording session to consider.</p><p>${modeConfirmationText()}</p>${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
     }
@@ -267,10 +293,13 @@ Make sure you have manually scrolled to the first message you want this recordin
       captureCounter = 0;
       messages = [];
       seenKeys.clear();
+      seenObservedKeys.clear();
+      skippedUnknownKeys.clear();
       lastSpeaker = "UNKNOWN";
       lastIsoDate = "";
       unknownWarningAccepted = false;
       unknownSkipped = 0;
+      recordingState = "recording";
       await chrome.storage.local.set({ messages, captureCounter, recordingState: "recording" });
       startMessageObserver();
       scheduleCapture();
@@ -278,12 +307,19 @@ Make sure you have manually scrolled to the first message you want this recordin
     }
     if (action === "stop") {
       stopMessageObserver();
+      recordingState = "stopped";
+      exportFilename = defaultFilename();
       await chrome.storage.local.set({ recordingState: "stopped" });
+      renderOverlay();
     }
     if (action === "clear" || action === "cancel") {
       messages = [];
       seenKeys.clear();
+      seenObservedKeys.clear();
+      skippedUnknownKeys.clear();
       overlayVisible = false;
+      recordingState = "idle";
+      captureCounter = 0;
       stopMessageObserver();
       await chrome.storage.local.set({ messages: [], captureCounter: 0, recordingState: "idle" });
     }
@@ -305,10 +341,19 @@ Make sure you have manually scrolled to the first message you want this recordin
     nodes.forEach((node, domIndex) => {
       const parsed = parseMessage(node, domIndex);
       if (!parsed) return;
-      totalSeen += 1;
-      if (!settings.everythingMode && !isInsideRange(parsed.isoDate)) return;
-      if (!settings.everythingMode && parsed.speaker === "UNKNOWN" && !settings.allowUnknownDateRange && !unknownWarningAccepted) { unknownSkipped += 1; return; }
       const key = messageKey(parsed);
+      if (!seenObservedKeys.has(key)) {
+        seenObservedKeys.add(key);
+        totalSeen += 1;
+      }
+      if (!settings.everythingMode && !isInsideRange(parsed.isoDate)) return;
+      if (!settings.everythingMode && parsed.speaker === "UNKNOWN" && !settings.allowUnknownDateRange && !unknownWarningAccepted) {
+        if (!skippedUnknownKeys.has(key)) {
+          skippedUnknownKeys.add(key);
+          unknownSkipped += 1;
+        }
+        return;
+      }
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         captureCounter += 1;
@@ -449,8 +494,39 @@ Make sure you have manually scrolled to the first message you want this recordin
 
   function exportTranscript() {
     const transcript = formatTranscript(messages, settings.includeTimestamps);
-    const filename = `discord-dm-log-${new Date().toISOString().slice(0, 10)}.txt`;
-    chrome.runtime.sendMessage({ type: "DOWNLOAD_TRANSCRIPT", text: transcript, filename });
+    const input = document.querySelector(`#${overlayId} [data-role="filename"]`);
+    exportFilename = sanitizeFilename(input?.value || defaultFilename());
+    if (input) input.value = exportFilename;
+    chrome.runtime.sendMessage({ type: "DOWNLOAD_TRANSCRIPT", text: transcript, filename: exportFilename }, (response) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError || response?.ok === false) {
+        showOverlayMessage(`Export failed: ${response?.error || lastError?.message || "Unknown download error."}`);
+      }
+    });
+  }
+
+  function defaultFilename() {
+    return `discord-dm-log-${new Date().toISOString().slice(0, 10)}.txt`;
+  }
+
+  function sanitizeFilename(value) {
+    const sanitized = String(value)
+      .trim()
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
+      .replace(/\.+$/g, "")
+      .replace(/\s+/g, " ");
+    const withName = sanitized || defaultFilename();
+    return withName.toLowerCase().endsWith(".txt") ? withName : `${withName}.txt`;
+  }
+
+  function showOverlayMessage(text) {
+    const overlay = document.getElementById(overlayId);
+    const body = overlay?.querySelector("[data-body]");
+    if (!body) return;
+    const note = document.createElement("p");
+    note.className = "warn";
+    note.textContent = text;
+    body.appendChild(note);
   }
 
   function formatTranscript(items, includeTimestamps) {

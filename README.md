@@ -13,7 +13,7 @@ All examples in this repository use fictional placeholder names only, such as `J
 - Watches messages only while recording, so the extension stays idle before confirmation and after stopping to reduce CPU usage. EVERYTHING mode is the only mode that intentionally captures every loaded message during recording.
 - Exports a grouped `.txt` transcript with optional timestamps.
 - Stores settings and temporary captured messages in `chrome.storage.local`.
-- Downloads the transcript with `chrome.downloads.download`.
+- Downloads the transcript with `chrome.downloads.download` and `saveAs: true` so Chrome opens the Save As dialog.
 
 ## What it does not do
 
@@ -49,23 +49,26 @@ It does not support server channels, group chats, threads, forums, or voice chan
 
 1. Open Discord Web manually.
 2. Open the correct one-on-one DM manually.
-3. Scroll to the desired starting position manually.
+3. Scroll to where recording should begin.
 4. Open the extension popup.
-5. Set your export labels. Defaults are `ME` and `FRIEND`.
-6. Enter both Discord display names, such as `JOHN` and `JANE`, for the most reliable speaker detection. Export labels remain separate from Discord display names.
-7. Configure settings: choose Date Range mode by setting both a start date and an end date, or check **EVERYTHING**. START is disabled for Date Range mode unless both dates are present.
-8. Click **START**. START should contact or inject the Discord page script on demand and show the overlay without reloading Discord.
-9. Confirm on the Discord page overlay that you are at the right starting position. Recording begins only after you click **Start Recording** in the overlay.
-10. Manually scroll downward through the conversation while recording.
-11. Click **Stop Recording**.
-12. Click **Export TXT**.
+5. Configure labels and Date Range or EVERYTHING. Defaults are `ME` and `FRIEND`; examples should use generic names such as `JOHN` and `JANE`.
+6. Click **START**.
+7. Confirm in the Discord page overlay by clicking **Start Recording**.
+8. Watch the overlay counter while manually scrolling.
+9. Click **END RECORDING**.
+10. Choose or edit the `.txt` file name in the overlay.
+11. Click **Export TXT**.
+12. Choose the save location in Chrome's Save As dialog.
 13. Clear captured data from the overlay when finished.
 
 ## START and performance notes
 
+- START should show the Discord page overlay or a clear popup error. If Discord Web is not the active tab, the popup tells you to open Discord Web manually, open the correct one-on-one DM, scroll to where recording should begin, and click **START** again.
 - START should work without reloading the Discord page, including when Discord Web was already open before the extension was loaded or updated.
 - If the extension was just updated, wait until Discord is fully loaded and click **START** again if the first attempt cannot start. A page reload should not normally be required.
 - The extension only observes the Discord message list while recording, and it throttles capture work to reduce CPU usage. It does not continuously rescan the page while idle.
+- Export uses Chrome's Save As dialog so you can choose the `.txt` file name and save location.
+- The extension does not automatically choose private folder paths or silently save into a hidden location.
 
 ## Export format
 

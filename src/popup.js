@@ -15,8 +15,7 @@ const missingDatesText = "Date Range mode requires both a start date and an end 
 const displayNameWarningText = "For best results, enter both Discord display names. If these are blank, speaker detection may be less accurate.";
 const everythingText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
 const dateRangeText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
-const openDiscordManuallyText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START.";
-const startFailedText = "Could not start the extension on this Discord tab. Make sure the page is fully loaded, then try START again.";
+const openDiscordManuallyText = "Open Discord Web manually, open the correct one-on-one DM, scroll to where you want recording to begin, then click START again.";
 
 const form = document.querySelector("#settings-form");
 const fields = {
@@ -37,7 +36,7 @@ const dateWarningEl = document.querySelector("#date-warning");
 const displayNameWarningEl = document.querySelector("#display-name-warning");
 const startButton = document.querySelector("#start");
 
-init();
+init().catch((error) => showPopupError("Could not initialize popup", error));
 
 async function init() {
   const { settings = DEFAULT_SETTINGS } = await chrome.storage.local.get("settings");
@@ -75,45 +74,81 @@ fields.selfDisplayName.addEventListener("input", updateValidation);
 fields.otherDisplayName.addEventListener("input", updateValidation);
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const settings = readSettings();
-  if (!settings.everythingMode && (!settings.startDate || !settings.endDate)) {
-    statusEl.textContent = missingDatesText.replace(/\n+/g, " ");
-    updateValidation();
-    return;
-  }
-  await chrome.storage.local.set({ settings });
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const isDiscordWeb = tab?.url?.startsWith("https://discord.com/");
-  if (!isDiscordWeb || !tab.id) {
-    statusEl.textContent = openDiscordManuallyText;
-    await showTabWarningIfNeeded();
-    return;
-  }
-
+  startButton.disabled = true;
+  statusEl.textContent = "Opening recording overlay…";
   try {
+    const settings = readSettings();
+    if (!settings.everythingMode && (!settings.startDate || !settings.endDate)) {
+      statusEl.textContent = missingDatesText.replace(/\n+/g, " ");
+      updateValidation();
+      return;
+    }
+    await chrome.storage.local.set({ settings });
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const isDiscordWeb = tab?.url?.startsWith("https://discord.com/");
+    if (!isDiscordWeb || !tab.id) {
+      statusEl.textContent = openDiscordManuallyText;
+      await showTabWarningIfNeeded();
+      return;
+    }
+
     const response = await showOverlayOnTab(tab.id);
     if (response?.ok) {
-      statusEl.textContent = "Confirm recording from the Discord page overlay.";
-      window.close();
-    } else {
-      statusEl.textContent = startFailedText;
+      statusEl.textContent = "Recording overlay opened on Discord.";
+      return;
     }
+    statusEl.textContent = response?.error || "Could not open the recording overlay on Discord.";
   } catch (error) {
-    statusEl.textContent = startFailedText;
+    showPopupError("Could not open the recording overlay", error);
+  } finally {
+    updateValidation();
   }
 });
 
 async function showOverlayOnTab(tabId) {
-  try {
-    return await chrome.tabs.sendMessage(tabId, { type: "SHOW_RECORDING_OVERLAY" });
-  } catch (error) {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["src/content.js"]
+  const firstResponse = await sendStartMessage(tabId);
+  if (firstResponse.ok) return firstResponse.response;
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["src/content.js"]
+  });
+  checkLastError("injecting the Discord page script");
+
+  const secondResponse = await sendStartMessage(tabId);
+  if (secondResponse.ok) return secondResponse.response;
+  throw new Error(secondResponse.error || firstResponse.error || "The Discord page script did not respond.");
+}
+
+function sendStartMessage(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: "SHOW_RECORDING_OVERLAY" }, (response) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError) {
+        resolve({ ok: false, error: lastError.message });
+        return;
+      }
+      if (!response) {
+        resolve({ ok: false, error: "The Discord page script returned no response." });
+        return;
+      }
+      if (response.ok === false) {
+        resolve({ ok: false, error: response.error || "The Discord page script reported an unknown error." });
+        return;
+      }
+      resolve({ ok: true, response });
     });
-    return chrome.tabs.sendMessage(tabId, { type: "SHOW_RECORDING_OVERLAY" });
-  }
+  });
+}
+
+function checkLastError(action) {
+  const lastError = chrome.runtime.lastError;
+  if (lastError) throw new Error(`Error while ${action}: ${lastError.message}`);
+}
+
+function showPopupError(prefix, error) {
+  statusEl.textContent = `${prefix}: ${error?.message || String(error)}`;
 }
 
 function updateValidation() {
