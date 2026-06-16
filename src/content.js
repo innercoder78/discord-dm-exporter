@@ -1,4 +1,7 @@
 (() => {
+  if (window.__discordDmLogExporterContentLoaded) return;
+  window.__discordDmLogExporterContentLoaded = true;
+
   const DEFAULT_SETTINGS = {
     selfLabel: "ME",
     otherLabel: "FRIEND",
@@ -27,6 +30,12 @@
   let unknownWarningAccepted = false;
   let unknownSkipped = 0;
   let overlayVisible = false;
+  let messageObserver = null;
+  let observedMessageContainer = null;
+  let captureScheduled = false;
+  let lastCaptureStartedAt = 0;
+  let lastOverlaySignature = "";
+  const minCaptureIntervalMs = 750;
 
   init();
 
@@ -39,7 +48,7 @@
     seenKeys = new Set(messages.map(messageKey));
     overlayVisible = recordingState === "recording" || recordingState === "stopped";
     renderOverlay();
-    observePageChanges();
+    if (recordingState === "recording") startMessageObserver();
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message?.type === "SHOW_RECORDING_OVERLAY") {
         overlayVisible = true;
@@ -56,6 +65,10 @@
       if (changes.recordingState) recordingState = changes.recordingState.newValue || "idle";
       if (changes.captureCounter) captureCounter = Number(changes.captureCounter.newValue || 0);
       seenKeys = new Set(messages.map(messageKey));
+      if (changes.recordingState) {
+        if (recordingState === "recording") startMessageObserver();
+        else stopMessageObserver();
+      }
       renderOverlay();
     });
   }
@@ -64,12 +77,61 @@
     return { ...DEFAULT_SETTINGS, ...(value || {}), ignoreReactions: true, allowUnknownDateRange: Boolean(value?.allowUnknownDateRange) };
   }
 
-  function observePageChanges() {
-    const observer = new MutationObserver(() => {
-      renderOverlay();
-      if (recordingState === "recording" && canRecordNow()) captureLoadedMessages();
+  function startMessageObserver() {
+    stopMessageObserver();
+    if (recordingState !== "recording") return;
+    const target = findMessageListContainer();
+    if (!target) {
+      scheduleCapture();
+      return;
+    }
+    observedMessageContainer = target;
+    messageObserver = new MutationObserver((mutations) => {
+      if (recordingState !== "recording") return;
+      const hasRelevantMutation = mutations.some((mutation) => !isInsideOverlay(mutation.target));
+      if (hasRelevantMutation) scheduleCapture();
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    messageObserver.observe(target, { childList: true, subtree: true });
+    scheduleCapture();
+  }
+
+  function stopMessageObserver() {
+    if (messageObserver) messageObserver.disconnect();
+    messageObserver = null;
+    observedMessageContainer = null;
+    captureScheduled = false;
+  }
+
+  function findMessageListContainer() {
+    const selectors = [
+      '[data-list-id="chat-messages"]',
+      'ol[aria-label*="Messages" i]',
+      '[role="log"]'
+    ];
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      if (element && !isInsideOverlay(element)) return element;
+    }
+    const message = document.querySelector('[id^="chat-messages-"], [role="article"]');
+    return message?.closest('[data-list-id], ol, [role="log"], main') || null;
+  }
+
+  function scheduleCapture() {
+    if (recordingState !== "recording" || captureScheduled) return;
+    captureScheduled = true;
+    const elapsed = Date.now() - lastCaptureStartedAt;
+    const delay = Math.max(minCaptureIntervalMs - elapsed, 0);
+    window.setTimeout(async () => {
+      captureScheduled = false;
+      if (recordingState !== "recording") return;
+      lastCaptureStartedAt = Date.now();
+      await captureLoadedMessages();
+      if (recordingState === "recording" && !observedMessageContainer) scheduleCapture();
+    }, delay);
+  }
+
+  function isInsideOverlay(node) {
+    return Boolean(node?.closest?.(`#${overlayId}`));
   }
 
   function dmStatus() {
@@ -107,6 +169,7 @@
     let overlay = document.getElementById(overlayId);
     if (!overlayVisible && recordingState === "idle") {
       overlay?.remove();
+      lastOverlaySignature = "";
       return;
     }
     if (!overlay) {
@@ -118,11 +181,12 @@
       </style><div data-body></div>`;
       document.body.appendChild(overlay);
       overlay.addEventListener("click", handleOverlayClick);
+      lastOverlaySignature = "";
     }
 
     const body = overlay.querySelector("[data-body]");
     if (!dmStatus().ok) {
-      body.innerHTML = `<h2>Discord DM Log Exporter</h2><p>${unsupportedText}</p>`;
+      updateOverlayBody(body, `<h2>Discord DM Log Exporter</h2><p>${unsupportedText}</p>`);
       return;
     }
 
@@ -134,15 +198,21 @@
 
     if (recordingState === "recording") {
       const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
-      body.innerHTML = `<h2>Recording…</h2><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p>${unknownWarning}<button data-action="stop">Stop Recording</button>`;
+      updateOverlayBody(body, `<h2>Recording…</h2><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p>${unknownWarning}<button data-action="stop">Stop Recording</button>`);
     } else if (recordingState === "stopped") {
-      body.innerHTML = `<h2>Recording stopped.</h2><p>${messages.length} messages ready to export.</p><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`;
+      updateOverlayBody(body, `<h2>Recording stopped.</h2><p>${messages.length} messages ready to export.</p><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
       const disabled = hasRequiredDates() ? "" : "disabled";
-      body.innerHTML = `<h2>Confirm starting position</h2><p>Are you in the position where recording should begin?
+      updateOverlayBody(body, `<h2>Confirm starting position</h2><p>Are you in the position where recording should begin?
 
-Make sure you have manually scrolled to the first message you want this recording session to consider.</p><p>${modeConfirmationText()}</p>${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`;
+Make sure you have manually scrolled to the first message you want this recording session to consider.</p><p>${modeConfirmationText()}</p>${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
     }
+  }
+
+  function updateOverlayBody(body, html) {
+    if (lastOverlaySignature === html) return;
+    lastOverlaySignature = html;
+    body.innerHTML = html;
   }
 
   async function handleOverlayClick(event) {
@@ -159,17 +229,23 @@ Make sure you have manually scrolled to the first message you want this recordin
       unknownWarningAccepted = false;
       unknownSkipped = 0;
       await chrome.storage.local.set({ messages, captureCounter, recordingState: "recording" });
-      captureLoadedMessages();
+      startMessageObserver();
+      scheduleCapture();
+      renderOverlay();
     }
-    if (action === "stop") await chrome.storage.local.set({ recordingState: "stopped" });
+    if (action === "stop") {
+      stopMessageObserver();
+      await chrome.storage.local.set({ recordingState: "stopped" });
+    }
     if (action === "clear" || action === "cancel") {
       messages = [];
       seenKeys.clear();
       overlayVisible = false;
+      stopMessageObserver();
       await chrome.storage.local.set({ messages: [], captureCounter: 0, recordingState: "idle" });
     }
     if (action === "export") exportTranscript();
-    if (action === "accept-unknown") { unknownWarningAccepted = true; captureLoadedMessages(); renderOverlay(); }
+    if (action === "accept-unknown") { unknownWarningAccepted = true; scheduleCapture(); renderOverlay(); }
   }
 
   function modeConfirmationText() {
@@ -179,7 +255,9 @@ Make sure you have manually scrolled to the first message you want this recordin
   }
 
   async function captureLoadedMessages() {
-    const nodes = [...document.querySelectorAll('[id^="chat-messages-"], [role="article"]')];
+    if (recordingState !== "recording" || !canRecordNow()) return;
+    const root = observedMessageContainer || findMessageListContainer() || document;
+    const nodes = [...root.querySelectorAll('[id^="chat-messages-"], [role="article"]')].filter((node) => !isInsideOverlay(node));
     const newMessages = [];
     nodes.forEach((node, domIndex) => {
       const parsed = parseMessage(node, domIndex);
@@ -200,6 +278,9 @@ Make sure you have manually scrolled to the first message you want this recordin
       await chrome.storage.local.set({ messages, captureCounter });
     }
     renderOverlay();
+    if (recordingState === "recording" && observedMessageContainer && !document.contains(observedMessageContainer)) {
+      startMessageObserver();
+    }
   }
 
   function parseMessage(node, domIndex) {
