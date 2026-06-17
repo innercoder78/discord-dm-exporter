@@ -36,6 +36,8 @@
   let observedMessageContainer = extensionState.observedMessageContainer || null;
   let scrollCaptureTarget = extensionState.scrollCaptureTarget || null;
   let scrollCaptureTimeoutId = extensionState.scrollCaptureTimeoutId || 0;
+  let scrollPollingIntervalId = extensionState.scrollPollingIntervalId || 0;
+  let lastPolledScrollTop = extensionState.lastPolledScrollTop || 0;
   let captureScheduled = false;
   let captureTimeoutId = extensionState.captureTimeoutId || 0;
   let lastCaptureStartedAt = extensionState.lastCaptureStartedAt || 0;
@@ -163,10 +165,12 @@
     scrollCaptureTarget = target;
     extensionState.scrollCaptureTarget = target;
     target.addEventListener("scroll", handleManualScroll, { passive: true });
+    startScrollPolling(target);
   }
 
   function stopScrollCaptureListener() {
     if (scrollCaptureTarget) scrollCaptureTarget.removeEventListener("scroll", handleManualScroll);
+    stopScrollPolling();
     if (scrollCaptureTimeoutId) window.clearTimeout(scrollCaptureTimeoutId);
     scrollCaptureTarget = null;
     scrollCaptureTimeoutId = 0;
@@ -174,8 +178,39 @@
     extensionState.scrollCaptureTimeoutId = 0;
   }
 
+  function startScrollPolling(target) {
+    stopScrollPolling();
+    if (!target || recordingState !== "recording") return;
+    lastPolledScrollTop = Number(target.scrollTop || 0);
+    extensionState.lastPolledScrollTop = lastPolledScrollTop;
+    scrollPollingIntervalId = window.setInterval(() => {
+      if (recordingState !== "recording" || !scrollCaptureTarget || !document.contains(scrollCaptureTarget)) {
+        stopScrollPolling();
+        return;
+      }
+      const currentScrollTop = Number(scrollCaptureTarget.scrollTop || 0);
+      if (currentScrollTop !== lastPolledScrollTop) {
+        lastPolledScrollTop = currentScrollTop;
+        extensionState.lastPolledScrollTop = currentScrollTop;
+        debounceScrollCapture();
+      }
+    }, 250);
+    extensionState.scrollPollingIntervalId = scrollPollingIntervalId;
+  }
+
+  function stopScrollPolling() {
+    if (scrollPollingIntervalId) window.clearInterval(scrollPollingIntervalId);
+    scrollPollingIntervalId = 0;
+    extensionState.scrollPollingIntervalId = 0;
+  }
+
   function handleManualScroll(event) {
     if (recordingState !== "recording" || isInsideOverlay(event.target)) return;
+    debounceScrollCapture();
+  }
+
+  function debounceScrollCapture() {
+    if (recordingState !== "recording") return;
     if (scrollCaptureTimeoutId) window.clearTimeout(scrollCaptureTimeoutId);
     scrollCaptureTimeoutId = window.setTimeout(() => {
       scrollCaptureTimeoutId = 0;
@@ -418,6 +453,7 @@
       .filter(Boolean);
     const suspiciousStableIds = findSuspiciousStableIds(parsedMessages);
 
+    let improvedExisting = false;
     parsedMessages.forEach((parsed) => {
       const key = messageKey(parsed, suspiciousStableIds);
       if (!seenObservedKeys.has(key)) {
@@ -432,14 +468,21 @@
         }
         return;
       }
-      if (!seenKeys.has(key)) {
+      const existingIndex = messages.findIndex((message) => messageKey(message, suspiciousStableIds) === key);
+      if (existingIndex >= 0) {
+        const merged = mergeMessageRecord(messages[existingIndex], parsed);
+        if (merged !== messages[existingIndex]) {
+          messages[existingIndex] = merged;
+          improvedExisting = true;
+        }
+      } else if (!seenKeys.has(key)) {
         seenKeys.add(key);
         captureCounter += 1;
         newMessages.push({ ...parsed, deduplicationKey: key, captureIndex: captureCounter });
       }
     });
 
-    if (newMessages.length) {
+    if (newMessages.length || improvedExisting) {
       messages = [...messages, ...newMessages].sort(compareMessages);
       await chrome.storage.local.set({ messages, captureCounter });
     }
@@ -455,6 +498,14 @@
 
   function findMessageCandidates(root) {
     const searchRoot = root?.querySelectorAll ? root : document;
+    const contentCandidates = uniqueElements([...searchRoot.querySelectorAll('[id^="message-content-"]')])
+      .filter(isValidMessageContentNode)
+      .map((contentNode) => {
+        const messageId = extractMessageContentId(contentNode);
+        return { contentNode, container: findClosestMessageContainer(contentNode, messageId), messageId };
+      });
+    const contentMessageIds = new Set(contentCandidates.map((candidate) => candidate.messageId).filter(Boolean));
+
     const primarySelectors = [
       'li[id^="chat-messages-"]',
       '[data-list-item-id^="chat-messages-"]',
@@ -481,7 +532,47 @@
         .filter(isValidMessageCandidate);
     }
 
-    return candidates;
+    const containerCandidates = candidates
+      .map((container) => ({ contentNode: null, container, messageId: getContainerMessageId(container) }))
+      .filter((candidate) => !candidate.messageId || !contentMessageIds.has(candidate.messageId));
+
+    return [...contentCandidates, ...containerCandidates];
+  }
+
+  function getContainerMessageId(container) {
+    return extractSnowflakeFromRecordId(getStableMessageId(container))
+      || messageSpecificSnowflake(container?.querySelector?.('[id^="message-content-"]')?.id, "descendant-message-content-id");
+  }
+
+  function isValidMessageContentNode(node) {
+    if (!node || isInsideOverlay(node) || isReplyPreviewElement(node)) return false;
+    if (!extractMessageContentId(node)) return false;
+    if (node.closest?.('[role="textbox"], [contenteditable="true"], form, [class*="channelTextArea"], [class*="slateTextArea"], [class*="replyBar"], [class*="attachedBars"]')) return false;
+    return true;
+  }
+
+  function extractMessageContentId(node) {
+    const match = String(node?.id || "").match(/^message-content-(\d{15,25})$/);
+    return match?.[1] || "";
+  }
+
+  function findClosestMessageContainer(contentNode, messageId = "") {
+    if (!contentNode || isInsideOverlay(contentNode)) return null;
+    const safeFallbackSelector = 'li[id^="chat-messages-"], li[data-list-item-id*="chat-messages"], [role="article"][id^="chat-messages-"], [role="article"][data-list-item-id], [role="article"], [class*="messageListItem"]';
+    let fallback = null;
+    let current = contentNode.parentElement;
+    while (current && current !== document.body && !isInsideOverlay(current)) {
+      if (current.matches?.('[role="textbox"], [contenteditable="true"], form, [class*="channelTextArea"], [class*="slateTextArea"], [class*="replyBar"], [class*="attachedBars"]')) return null;
+      if (isReplyPreviewElement(current)) return null;
+      const id = current.id || "";
+      const listId = current.getAttribute?.("data-list-item-id") || "";
+      const hasMessageId = messageId && (id.includes(messageId) || listId.includes(messageId));
+      const isChatItem = id.startsWith("chat-messages-") || listId.includes("chat-messages");
+      if (hasMessageId || isChatItem) return current;
+      if (!fallback && current.matches?.(safeFallbackSelector)) fallback = current;
+      current = current.parentElement;
+    }
+    return fallback || normalizeMessageCandidate(contentNode);
   }
 
   function uniqueElements(elements) {
@@ -516,26 +607,57 @@
     return new Set([...fingerprintsById].filter(([, fingerprints]) => fingerprints.size > 1).map(([id]) => id));
   }
 
-  function parseMessage(node, domIndex) {
-    if (isReactionOrControl(node)) return null;
-    const timestamp = node.querySelector('time[datetime]')?.getAttribute("datetime") || "";
+  function parseMessage(candidate, domIndex) {
+    const contentNode = candidate?.contentNode || null;
+    const node = candidate?.container || candidate;
+    if (!node || isReactionOrControl(node)) return null;
+    const contentMessageId = extractMessageContentId(contentNode);
+    const timestamp = node.querySelector('time[datetime]')?.getAttribute("datetime") || contentNode?.closest?.('[aria-labelledby]')?.querySelector?.('time[datetime]')?.getAttribute("datetime") || "";
     const exactDate = parseExactTimestamp(timestamp);
     const dividerDate = exactDate ? "" : findNearestDateDivider(node);
     const isoDate = exactDate || dividerDate;
     const hasExactTimestamp = Boolean(exactDate);
     const authorText = getAuthor(node);
     const speaker = authorText ? speakerFor(authorText) : lastSpeaker;
-    const text = getMessageText(node);
+    const text = contentNode ? getMessageTextFromContentNode(contentNode) : getMessageText(node);
     const markers = getMarkers(node, speaker);
     const body = [text, ...markers].filter(Boolean).join("\n").trim();
     if (!body) return null;
     if (speaker) lastSpeaker = speaker;
     if (isoDate) lastIsoDate = isoDate;
-    const id = getStableMessageId(node);
+    const id = contentMessageId ? `discord:${contentMessageId}` : getStableMessageId(node);
     const effectiveIsoDate = isoDate || lastIsoDate;
     const fallbackDeduplicationKey = buildFallbackDeduplicationKey({ speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, markers });
     const key = id || fallbackDeduplicationKey;
     return { id, deduplicationKey: key, fallbackDeduplicationKey, speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, domIndex };
+  }
+
+  function mergeMessageRecord(existing, parsed) {
+    let changed = false;
+    const merged = { ...existing };
+    if ((merged.speaker === "UNKNOWN" || !merged.speaker) && parsed.speaker && parsed.speaker !== "UNKNOWN") {
+      merged.speaker = parsed.speaker;
+      changed = true;
+    }
+    if (!merged.isoDate && parsed.isoDate) {
+      merged.isoDate = parsed.isoDate;
+      changed = true;
+    }
+    if (!merged.hasExactTimestamp && parsed.hasExactTimestamp) {
+      merged.isoDate = parsed.isoDate;
+      merged.hasExactTimestamp = true;
+      changed = true;
+    }
+    if (normalizeMessageText(parsed.text).length > normalizeMessageText(merged.text).length) {
+      merged.text = parsed.text;
+      changed = true;
+    }
+    if (!merged.id && parsed.id) {
+      merged.id = parsed.id;
+      merged.deduplicationKey = parsed.id;
+      changed = true;
+    }
+    return changed ? merged : existing;
   }
 
   function getStableMessageId(node) {
@@ -557,6 +679,8 @@
 
   function messageSpecificSnowflake(value, attributeName) {
     const text = String(value || "");
+    const contentMatch = text.match(/message-content-(\d{15,25})/);
+    if (contentMatch) return contentMatch[1];
     const chatMessageMatch = text.match(/chat-messages-(\d{15,25})-(\d{15,25})/);
     if (chatMessageMatch) return chatMessageMatch[2];
     const explicitMessageMatch = text.match(/(?:^|[^a-z])message-(\d{15,25})(?:\b|$)/i);
@@ -595,7 +719,22 @@
     return "UNKNOWN";
   }
 
+  function getMessageTextFromContentNode(contentNode) {
+    if (!contentNode || isReplyPreviewElement(contentNode)) return "";
+    const clone = contentNode.cloneNode(true);
+    removeMessageTextIgnoredMetadata(clone);
+    return cleanMessageText(clone.innerText || clone.textContent || "");
+  }
+
   function getMessageText(node) {
+    return [...node.querySelectorAll('[id^="message-content-"]')]
+      .filter(isValidMessageContentNode)
+      .map(getMessageTextFromContentNode)
+      .filter(Boolean)
+      .join("\n") || getMessageTextFromLegacyContent(node);
+  }
+
+  function getMessageTextFromLegacyContent(node) {
     const ignoredSelectors = [
       '[class*="reaction"]',
       '[aria-label*="reaction" i]',
@@ -620,6 +759,25 @@
       })
       .filter(Boolean)
       .join("\n");
+  }
+
+  function removeMessageTextIgnoredMetadata(root) {
+    const ignoredSelectors = [
+      '[class*="reaction"]',
+      '[aria-label*="reaction" i]',
+      '[aria-label*="React" i]',
+      '[class*="button"]',
+      '[role="button"]',
+      '[class*="buttons"]',
+      '[class*="operations"]',
+      '[class*="edited"]',
+      '[aria-label*="edited" i]',
+      '[title*="edited" i]',
+      '[class*="timestamp"]',
+      'time'
+    ].join(", ");
+    root.querySelectorAll(ignoredSelectors).forEach((ignored) => ignored.remove());
+    removeHiddenMetadata(root);
   }
 
   function isReplyPreviewElement(el) {
@@ -709,6 +867,8 @@
   }
 
   function compareMessages(a, b) {
+    const snowflakeOrder = compareSnowflakeIds(a.id, b.id);
+    if (snowflakeOrder) return snowflakeOrder;
     const order = (a.captureIndex ?? a.domIndex ?? 0) - (b.captureIndex ?? b.domIndex ?? 0);
     const aDay = calendarDay(a.isoDate);
     const bDay = calendarDay(b.isoDate);
@@ -718,6 +878,18 @@
       return a.isoDate.localeCompare(b.isoDate);
     }
     return order;
+  }
+
+  function compareSnowflakeIds(aId, bId) {
+    const aSnowflake = extractSnowflakeFromRecordId(aId);
+    const bSnowflake = extractSnowflakeFromRecordId(bId);
+    if (!aSnowflake || !bSnowflake || aSnowflake === bSnowflake) return 0;
+    return aSnowflake.length === bSnowflake.length ? aSnowflake.localeCompare(bSnowflake) : aSnowflake.length - bSnowflake.length;
+  }
+
+  function extractSnowflakeFromRecordId(id) {
+    const match = String(id || "").match(/^discord:(\d{15,25})$/);
+    return match?.[1] || "";
   }
 
   function calendarDay(isoDate) {
