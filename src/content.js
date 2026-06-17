@@ -524,7 +524,7 @@
   function getAuthor(node) {
     const labelled = node.getAttribute("aria-label") || node.querySelector("[aria-label*=\"Message from\"]")?.getAttribute("aria-label") || "";
     const fromMatch = labelled.match(/Message from ([^,]+)/i);
-    return (fromMatch?.[1] || node.querySelector('[class*="username"], h3 span')?.textContent || "").trim();
+    return (fromMatch?.[1] || node.querySelector('h3 [class*="username"], h3 span, [class*="header"] [class*="username"]')?.textContent || "").trim();
   }
 
   function speakerFor(authorText) {
@@ -537,15 +537,61 @@
   }
 
   function getMessageText(node) {
-    const ignoredSelectors = '[class*="reaction"], [aria-label*="reaction" i], [aria-label*="React" i], [class*="button"], [role="button"], [class*="buttons"], [class*="operations"]';
+    const ignoredSelectors = [
+      '[class*="reaction"]',
+      '[aria-label*="reaction" i]',
+      '[aria-label*="React" i]',
+      '[class*="button"]',
+      '[role="button"]',
+      '[class*="buttons"]',
+      '[class*="operations"]',
+      '[class*="edited"]',
+      '[aria-label*="edited" i]',
+      '[title*="edited" i]',
+      '[class*="timestamp"]',
+      'time'
+    ].join(", ");
     return [...node.querySelectorAll('[class*="messageContent"]')]
+      .filter((el) => !isReplyPreviewElement(el))
       .map((el) => {
         const clone = el.cloneNode(true);
         clone.querySelectorAll(ignoredSelectors).forEach((ignored) => ignored.remove());
-        return (clone.innerText || clone.textContent || "").replace(/\s*\(edited\)$/i, "").trim();
+        removeHiddenMetadata(clone);
+        return cleanMessageText(clone.innerText || clone.textContent || "");
       })
       .filter(Boolean)
       .join("\n");
+  }
+
+  function isReplyPreviewElement(el) {
+    return Boolean(el.closest([
+      '[class*="repliedMessage"]',
+      '[class*="referencedMessage"]',
+      '[class*="threadMessageAccessory"]',
+      '[class*="messageReference"]'
+    ].join(", ")));
+  }
+
+  function removeHiddenMetadata(root) {
+    [...root.querySelectorAll("[aria-label], [title], [style], [hidden], [aria-hidden='true']")]
+      .filter((el) => {
+        const ariaLabel = el.getAttribute("aria-label") || "";
+        const title = el.getAttribute("title") || "";
+        const style = el.getAttribute("style") || "";
+        return el.hidden
+          || el.getAttribute("aria-hidden") === "true"
+          || /edited/i.test(ariaLabel)
+          || /edited/i.test(title)
+          || /display:\s*none|visibility:\s*hidden|position:\s*absolute/i.test(style);
+      })
+      .forEach((el) => el.remove());
+  }
+
+  function cleanMessageText(value) {
+    return String(value || "")
+      .replace(/\s*\(edited\)(?:\s*(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}(?:\s+at)?\s+\d{1,2}:\d{2}(?:\s*[AP]M)?)?\s*$/i, "")
+      .replace(/\s*\(edited\)\s*$/i, "")
+      .trim();
   }
 
   function getMarkers(node, speaker) {
