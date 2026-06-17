@@ -498,9 +498,13 @@
 
   function findMessageCandidates(root) {
     const searchRoot = root?.querySelectorAll ? root : document;
-    const contentNodes = uniqueElements([...searchRoot.querySelectorAll('[id^="message-content-"]')])
-      .filter(isValidMessageContentNode);
-    if (contentNodes.length) return contentNodes.map((contentNode) => ({ contentNode, container: findClosestMessageContainer(contentNode, extractMessageContentId(contentNode)) }));
+    const contentCandidates = uniqueElements([...searchRoot.querySelectorAll('[id^="message-content-"]')])
+      .filter(isValidMessageContentNode)
+      .map((contentNode) => {
+        const messageId = extractMessageContentId(contentNode);
+        return { contentNode, container: findClosestMessageContainer(contentNode, messageId), messageId };
+      });
+    const contentMessageIds = new Set(contentCandidates.map((candidate) => candidate.messageId).filter(Boolean));
 
     const primarySelectors = [
       'li[id^="chat-messages-"]',
@@ -528,7 +532,16 @@
         .filter(isValidMessageCandidate);
     }
 
-    return candidates.map((container) => ({ contentNode: null, container }));
+    const containerCandidates = candidates
+      .map((container) => ({ contentNode: null, container, messageId: getContainerMessageId(container) }))
+      .filter((candidate) => !candidate.messageId || !contentMessageIds.has(candidate.messageId));
+
+    return [...contentCandidates, ...containerCandidates];
+  }
+
+  function getContainerMessageId(container) {
+    return extractSnowflakeFromRecordId(getStableMessageId(container))
+      || messageSpecificSnowflake(container?.querySelector?.('[id^="message-content-"]')?.id, "descendant-message-content-id");
   }
 
   function isValidMessageContentNode(node) {
