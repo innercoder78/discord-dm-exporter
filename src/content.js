@@ -407,10 +407,11 @@
       : `Date Range mode is selected.\n\nStart date: ${settings.startDate || "not set"}\nEnd date: ${settings.endDate || "not set"}\n\nMessages outside this range will not be exported.`;
   }
 
-  async function captureLoadedMessages() {
-    if (recordingState !== "recording" || !canRecordNow()) return;
-    const root = observedMessageContainer || findMessageListContainer() || document;
-    const nodes = findMessageCandidates(root);
+  async function captureLoadedMessages({ allowStopped = false } = {}) {
+    const canCaptureStoppedPage = allowStopped && recordingState === "stopped";
+    if (recordingState !== "recording" && !canCaptureStoppedPage) return;
+    if (!canRecordNow()) return;
+    const nodes = findLoadedMessageCandidates();
     const newMessages = [];
     const parsedMessages = nodes
       .map((node, domIndex) => parseMessage(node, domIndex))
@@ -448,26 +449,32 @@
     }
   }
 
+  function findLoadedMessageCandidates() {
+    return findMessageCandidates(document);
+  }
+
   function findMessageCandidates(root) {
+    const searchRoot = root?.querySelectorAll ? root : document;
     const primarySelectors = [
       'li[id^="chat-messages-"]',
       '[data-list-item-id^="chat-messages-"]',
       '[data-list-item-id*="chat-messages"]',
+      '[class*="messageListItem"]',
       '[role="article"][id^="chat-messages-"]',
       '[role="article"][data-list-item-id]',
       '[role="article"]'
     ];
-    let candidates = uniqueElements(primarySelectors.flatMap((selector) => [...root.querySelectorAll(selector)]))
+    let candidates = uniqueElements(primarySelectors.flatMap((selector) => [...searchRoot.querySelectorAll(selector)]))
       .map(normalizeMessageCandidate)
       .filter(Boolean);
     candidates = uniqueElements(candidates).filter(isValidMessageCandidate);
 
-    const messageLikeDescendants = countMessageLikeDescendants(root);
+    const messageLikeDescendants = countMessageLikeDescendants(searchRoot);
     if (candidates.length <= 1 && messageLikeDescendants > candidates.length + 1) {
       const fallback = uniqueElements([
-        ...root.querySelectorAll('li[id^="chat-messages-"], li[data-list-item-id*="chat-messages"]'),
-        ...root.querySelectorAll('[class*="messageListItem"], [class*="messageListItem_"]'),
-        ...root.querySelectorAll('[class*="messageContent"]')
+        ...searchRoot.querySelectorAll('li[id^="chat-messages-"], li[data-list-item-id*="chat-messages"]'),
+        ...searchRoot.querySelectorAll('[class*="messageListItem"], [class*="messageListItem_"]'),
+        ...searchRoot.querySelectorAll('[class*="messageContent"]')
           .map((node) => node.closest('li[id^="chat-messages-"], li[data-list-item-id], [role="article"], [class*="messageListItem"]'))
       ]).filter(Boolean);
       candidates = uniqueElements([...candidates, ...fallback.map(normalizeMessageCandidate)])
@@ -488,6 +495,7 @@
 
   function isValidMessageCandidate(node) {
     if (!node || isInsideOverlay(node) || isReactionOrControl(node)) return false;
+    if (node.closest?.('[role="textbox"], [contenteditable="true"], form, [class*="channelTextArea"], [class*="slateTextArea"], [class*="replyBar"], [class*="attachedBars"]')) return false;
     if (node.matches('[data-list-id="chat-messages"], [role="log"], main, ol') && !node.matches('li, [role="article"]')) return false;
     return Boolean(node.querySelector('time[datetime], [class*="messageContent"], a[href*="cdn.discordapp.com"], [class*="attachment"], [class*="voiceMessage"], [aria-label*="Voice message" i]'));
   }
@@ -737,7 +745,8 @@
     });
   }
 
-  function exportTranscript() {
+  async function exportTranscript() {
+    await captureLoadedMessages({ allowStopped: true });
     const timestampFormats = readTimestampFormats();
     const transcript = formatTranscript(messages, settings.includeTimestamps, timestampFormats);
     exportFilename = defaultFilename();
