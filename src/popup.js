@@ -8,8 +8,7 @@ const DEFAULT_SETTINGS = {
   everythingMode: false,
   includeTimestamps: false,
   ignoreReactions: true,
-  allowUnknownDateRange: false,
-  developerMode: false
+  allowUnknownDateRange: false
 };
 
 const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
@@ -27,8 +26,7 @@ const fields = {
   startDate: document.querySelector("#start-date"),
   endDate: document.querySelector("#end-date"),
   everythingMode: document.querySelector("#everything-mode"),
-  includeTimestamps: document.querySelector("#include-timestamps"),
-  developerMode: document.querySelector("#developer-mode")
+  includeTimestamps: document.querySelector("#include-timestamps")
 };
 const statusEl = document.querySelector("#status");
 const instructionsEl = document.querySelector("#mode-instructions");
@@ -41,9 +39,25 @@ init().catch((error) => showPopupError("Could not initialize popup", error));
 
 async function init() {
   const { settings = DEFAULT_SETTINGS } = await chrome.storage.local.get("settings");
-  populate({ ...DEFAULT_SETTINGS, ...settings, ignoreReactions: true });
+  populate(normalizeSettings(settings));
   updateValidation();
   await showTabWarningIfNeeded();
+}
+
+function normalizeSettings(value) {
+  return {
+    ...DEFAULT_SETTINGS,
+    selfLabel: value?.selfLabel || DEFAULT_SETTINGS.selfLabel,
+    otherLabel: value?.otherLabel || DEFAULT_SETTINGS.otherLabel,
+    selfDisplayName: value?.selfDisplayName || "",
+    otherDisplayName: value?.otherDisplayName || "",
+    startDate: value?.startDate || "",
+    endDate: value?.endDate || "",
+    everythingMode: Boolean(value?.everythingMode),
+    includeTimestamps: Boolean(value?.includeTimestamps),
+    ignoreReactions: true,
+    allowUnknownDateRange: Boolean(value?.allowUnknownDateRange)
+  };
 }
 
 function populate(settings) {
@@ -64,8 +78,7 @@ function readSettings() {
     everythingMode: fields.everythingMode.checked,
     includeTimestamps: fields.includeTimestamps.checked,
     ignoreReactions: true,
-    allowUnknownDateRange: false,
-    developerMode: fields.developerMode.checked
+    allowUnknownDateRange: false
   };
 }
 
@@ -74,9 +87,6 @@ fields.startDate.addEventListener("input", updateValidation);
 fields.endDate.addEventListener("input", updateValidation);
 fields.selfDisplayName.addEventListener("input", updateValidation);
 fields.otherDisplayName.addEventListener("input", updateValidation);
-fields.developerMode.addEventListener("change", async () => {
-  await chrome.storage.local.set({ settings: readSettings() });
-});
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   startButton.disabled = true;
