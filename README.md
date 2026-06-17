@@ -12,6 +12,7 @@ It works locally in your browser while you manually scroll through a DM. It does
 * Supports Date Range mode for cleaner start and end points
 * Supports EVERYTHING mode for recording all loaded messages
 * Avoids duplicate entries when scrolling back and forth
+* Leaves Discord reply previews and edited-message UI metadata out of exported logs
 * Ignores emoji reactions
 * Adds simple markers for files, images, and voice messages
 * Lets you show timestamps and choose their TXT export date/time format
