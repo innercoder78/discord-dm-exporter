@@ -239,7 +239,7 @@
       overlay.id = overlayId;
       overlay.innerHTML = `<style>
         #${overlayId}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:340px;background:#1f2330;color:#fff;border:1px solid #5865f2;border-radius:12px;box-shadow:0 10px 30px #0008;font:14px/1.4 Arial,sans-serif;padding:14px}
-        #${overlayId} h2{font-size:16px;margin:0 0 8px} #${overlayId} p{margin:7px 0;white-space:pre-line} #${overlayId} button{border:0;border-radius:7px;padding:8px 10px;margin:6px 6px 0 0;background:#5865f2;color:#fff;font-weight:700;cursor:pointer} #${overlayId} button.secondary{background:#4b5563} #${overlayId} button.danger{background:#b91c1c} #${overlayId} .warn{background:#3b2a16;border:1px solid #fdba74;border-radius:8px;padding:8px} #${overlayId} label{display:block;font-weight:700;margin-top:8px}
+        #${overlayId} h2{font-size:16px;margin:0 0 8px} #${overlayId} p{margin:7px 0;white-space:pre-line} #${overlayId} button{border:0;border-radius:7px;padding:8px 10px;margin:6px 6px 0 0;background:#5865f2;color:#fff;font-weight:700;cursor:pointer} #${overlayId} button.secondary{background:#4b5563} #${overlayId} button.danger{background:#b91c1c} #${overlayId} .warn{background:#3b2a16;border:1px solid #fdba74;border-radius:8px;padding:8px} #${overlayId} label{display:block;font-weight:700;margin-top:8px} #${overlayId} select{box-sizing:border-box;width:100%;margin-top:4px;padding:7px;border-radius:6px;border:1px solid #6b7280;background:#111827;color:#fff}
       </style><div data-body></div>`;
       document.body.appendChild(overlay);
       lastOverlaySignature = "";
@@ -265,7 +265,7 @@
       const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
       updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
     } else if (recordingState === "stopped") {
-      updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p><button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
+      updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p>${timestampFormatControls()}<button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
       const disabled = hasRequiredDates() ? "" : "disabled";
       updateOverlayBody(body, `<h2>Confirm starting position</h2><p>After you click Start Recording, scroll manually through the DM. Messages are captured as Discord loads them.</p><p>For the cleanest log, start where you want the log to begin and scroll down until you reach the point where you want it to end.</p><p>${modeConfirmationText()}</p>${everythingNote}${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
@@ -285,6 +285,11 @@
     }
     extensionState.overlayClickListener = handleOverlayClick;
     overlay.addEventListener("click", handleOverlayClick);
+  }
+
+  function timestampFormatControls() {
+    if (!settings.includeTimestamps) return "";
+    return `<label>Date Format<select data-timestamp-date-format><option value="MM/DD/YYYY" selected>MM/DD/YYYY</option><option value="DD/MM/YYYY">DD/MM/YYYY</option><option value="YYYY/MM/DD">YYYY/MM/DD</option></select></label><label>Time Format<select data-timestamp-time-format><option value="12" selected>12 HOURS (AM/PM)</option><option value="24">24 HOURS (00:00 to 23:59)</option></select></label>`;
   }
 
   async function handleOverlayClick(event) {
@@ -636,7 +641,8 @@
   }
 
   function exportTranscript() {
-    const transcript = formatTranscript(messages, settings.includeTimestamps);
+    const timestampFormats = readTimestampFormats();
+    const transcript = formatTranscript(messages, settings.includeTimestamps, timestampFormats);
     exportFilename = defaultFilename();
     chrome.runtime.sendMessage({ type: "DOWNLOAD_TRANSCRIPT", text: transcript, filename: exportFilename }, async (response) => {
       const lastError = chrome.runtime.lastError;
@@ -672,11 +678,19 @@
     body.appendChild(note);
   }
 
-  function formatTranscript(items, includeTimestamps) {
+  function readTimestampFormats() {
+    const overlay = document.getElementById(overlayId);
+    return {
+      dateFormat: overlay?.querySelector("[data-timestamp-date-format]")?.value || "MM/DD/YYYY",
+      timeFormat: overlay?.querySelector("[data-timestamp-time-format]")?.value || "12"
+    };
+  }
+
+  function formatTranscript(items, includeTimestamps, timestampFormats = {}) {
     const blocks = [];
     let current;
     for (const item of items) {
-      const stamp = includeTimestamps && item.isoDate ? `[${item.isoDate.slice(0, 16).replace("T", " ")}]\n` : "";
+      const stamp = includeTimestamps && item.isoDate ? `[${formatExportTimestamp(item.isoDate, timestampFormats)}]\n` : "";
       if (!current || current.speaker !== item.speaker || stamp) {
         current = { speaker: item.speaker, lines: [], stamp };
         blocks.push(current);
@@ -684,6 +698,31 @@
       current.lines.push(item.text);
     }
     return blocks.map((block) => `${block.stamp}${block.speaker}:\n${block.lines.join("\n\n")}`).join("\n\n");
+  }
+
+  function formatExportTimestamp(isoDate, { dateFormat = "MM/DD/YYYY", timeFormat = "12" } = {}) {
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) return isoDate.slice(0, 16).replace("T", " ");
+
+    const year = String(date.getUTCFullYear());
+    const month = pad2(date.getUTCMonth() + 1);
+    const day = pad2(date.getUTCDate());
+    const formattedDate = {
+      "DD/MM/YYYY": `${day}/${month}/${year}`,
+      "YYYY/MM/DD": `${year}/${month}/${day}`
+    }[dateFormat] || `${month}/${day}/${year}`;
+
+    const hours = date.getUTCHours();
+    const minutes = pad2(date.getUTCMinutes());
+    if (timeFormat === "24") return `${formattedDate} ${pad2(hours)}:${minutes}`;
+
+    const period = hours >= 12 ? "PM" : "AM";
+    const hour12 = hours % 12 || 12;
+    return `${formattedDate} ${hour12}:${minutes} ${period}`;
+  }
+
+  function pad2(value) {
+    return String(value).padStart(2, "0");
   }
 
   function escapeHtml(value) {
