@@ -8,7 +8,8 @@ const DEFAULT_SETTINGS = {
   everythingMode: false,
   includeTimestamps: false,
   ignoreReactions: true,
-  allowUnknownDateRange: false
+  allowUnknownDateRange: false,
+  developerMode: false
 };
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -28,7 +29,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "DOWNLOAD_TRANSCRIPT") {
+  if (message?.type === "DOWNLOAD_TRANSCRIPT" || message?.type === "DOWNLOAD_DEBUG_TRANSCRIPT") {
     downloadTranscript(message.text || "", message.filename || defaultFilename())
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
