@@ -18,7 +18,7 @@
   const overlayId = "discord-dm-log-exporter-overlay";
   const unsupportedText = "This extension is designed only for one-on-one Discord DMs.\n\nServer channels, group chats, threads, forums, and voice channels are not supported.";
   const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
-  const unknownWarningText = "Some loaded messages cannot be confidently mapped to either configured Discord name. UNKNOWN messages are skipped in Date Range mode unless you explicitly continue.";
+  const unknownWarningText = "Some loaded messages cannot be confidently mapped to either configured Discord name. UNKNOWN messages are retained for review and may need warning/resolution before export.";
   let settings = DEFAULT_SETTINGS;
   let messages = [];
   let recordingState = "idle";
@@ -42,6 +42,7 @@
   let captureTimeoutId = extensionState.captureTimeoutId || 0;
   let lastCaptureStartedAt = extensionState.lastCaptureStartedAt || 0;
   let lastOverlaySignature = extensionState.lastOverlaySignature || "";
+  let lastCaptureDiagnostics = extensionState.lastCaptureDiagnostics || null;
   let exportFilename = defaultFilename();
   const minCaptureIntervalMs = 750;
 
@@ -57,8 +58,21 @@
     overlayVisible = recordingState === "recording" || recordingState === "stopped";
     registerRuntimeMessageListener();
     registerStorageChangeListener();
+    registerDebugHelpers();
     renderOverlay();
     if (recordingState === "recording") startMessageObserver();
+  }
+
+  function registerDebugHelpers() {
+    window.__DISCORD_DM_EXPORT_DEBUG_SCAN__ = () => {
+      const nodes = findLoadedMessageCandidates();
+      const diagnostics = createCaptureDiagnostics("manual-debug-scan", nodes);
+      const parsedMessages = nodes.map((node, domIndex) => parseMessage(node, domIndex, diagnostics)).filter(Boolean);
+      diagnostics.parsedMessages = parsedMessages.length;
+      diagnostics.parsedIds = parsedMessages.map((message) => message.id || message.deduplicationKey || `dom:${message.domIndex}`).slice(0, 100);
+      publishCaptureDiagnostics(diagnostics);
+      return diagnostics;
+    };
   }
 
   function registerRuntimeMessageListener() {
@@ -348,7 +362,8 @@
 
     if (recordingState === "recording") {
       const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
-      updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
+      const debugLine = lastCaptureDiagnostics ? `<p style="font-size:12px;opacity:.8">Found: ${lastCaptureDiagnostics.foundContentNodes} | Parsed: ${lastCaptureDiagnostics.parsedMessages} | Saved: ${lastCaptureDiagnostics.savedNewMessages} | Skipped date: ${lastCaptureDiagnostics.skippedMissingDate} | Skipped unknown: ${lastCaptureDiagnostics.skippedUnknownSpeaker}</p>` : "";
+      updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${debugLine}${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
     } else if (recordingState === "stopped") {
       updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p>${timestampFormatControls()}<button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
@@ -443,30 +458,41 @@
   }
 
   async function captureLoadedMessages({ allowStopped = false } = {}) {
+    const captureReason = allowStopped ? "stopped-page-scan" : "recording-scan";
     const canCaptureStoppedPage = allowStopped && recordingState === "stopped";
     if (recordingState !== "recording" && !canCaptureStoppedPage) return;
     if (!canRecordNow()) return;
     const nodes = findLoadedMessageCandidates();
+    const diagnostics = createCaptureDiagnostics(captureReason, nodes);
     const newMessages = [];
     const parsedMessages = nodes
-      .map((node, domIndex) => parseMessage(node, domIndex))
+      .map((node, domIndex) => parseMessage(node, domIndex, diagnostics))
       .filter(Boolean);
+    diagnostics.parsedMessages = parsedMessages.length;
     const suspiciousStableIds = findSuspiciousStableIds(parsedMessages);
 
     let improvedExisting = false;
     parsedMessages.forEach((parsed) => {
+      diagnostics.parsedIds.push(parsed.id || parsed.deduplicationKey || `dom:${parsed.domIndex}`);
       const key = messageKey(parsed, suspiciousStableIds);
       if (!seenObservedKeys.has(key)) {
         seenObservedKeys.add(key);
         totalSeen += 1;
       }
-      if (!settings.everythingMode && !isInsideRange(parsed.isoDate)) return;
+      if (!settings.everythingMode && !parsed.isoDate) {
+        incrementDiagnosticSkip(diagnostics, "skippedMissingDate", parsed.id || key);
+        return;
+      }
+      if (!settings.everythingMode && !isInsideRange(parsed.isoDate)) {
+        incrementDiagnosticSkip(diagnostics, "skippedOutOfDateRange", parsed.id || key);
+        return;
+      }
       if (!settings.everythingMode && parsed.speaker === "UNKNOWN" && !settings.allowUnknownDateRange && !unknownWarningAccepted) {
         if (!skippedUnknownKeys.has(key)) {
           skippedUnknownKeys.add(key);
           unknownSkipped += 1;
         }
-        return;
+        diagnostics.skippedUnknownSpeaker += 1;
       }
       const existingIndex = messages.findIndex((message) => messageKey(message, suspiciousStableIds) === key);
       if (existingIndex >= 0) {
@@ -474,11 +500,17 @@
         if (merged !== messages[existingIndex]) {
           messages[existingIndex] = merged;
           improvedExisting = true;
+          diagnostics.mergedExistingMessages += 1;
+        } else {
+          incrementDiagnosticSkip(diagnostics, "skippedDuplicate", parsed.id || key);
         }
       } else if (!seenKeys.has(key)) {
         seenKeys.add(key);
         captureCounter += 1;
         newMessages.push({ ...parsed, deduplicationKey: key, captureIndex: captureCounter });
+        diagnostics.savedNewMessages += 1;
+      } else {
+        incrementDiagnosticSkip(diagnostics, "skippedDuplicate", parsed.id || key);
       }
     });
 
@@ -486,6 +518,7 @@
       messages = [...messages, ...newMessages].sort(compareMessages);
       await chrome.storage.local.set({ messages, captureCounter });
     }
+    publishCaptureDiagnostics(diagnostics);
     renderOverlay();
     if (recordingState === "recording" && observedMessageContainer && !document.contains(observedMessageContainer)) {
       startMessageObserver();
@@ -539,7 +572,47 @@
     return [...contentCandidates, ...containerCandidates];
   }
 
+  function createCaptureDiagnostics(captureReason, candidates) {
+    return {
+      captureReason,
+      capturedAt: new Date().toISOString(),
+      foundContentNodes: document.querySelectorAll('[id^="message-content-"]').length,
+      foundContainerCandidates: candidates.filter((candidate) => candidate?.container && !candidate?.contentNode).length,
+      candidateIds: candidates.map(candidateDiagnosticId).slice(0, 100),
+      parsedIds: [],
+      parsedMessages: 0,
+      savedNewMessages: 0,
+      mergedExistingMessages: 0,
+      skippedInvalidCandidate: 0,
+      skippedEmptyBody: 0,
+      skippedOutOfDateRange: 0,
+      skippedUnknownSpeaker: 0,
+      skippedDuplicate: 0,
+      skippedMissingDate: 0,
+      skippedIds: []
+    };
+  }
+
+  function candidateDiagnosticId(candidate) {
+    const target = candidate?.container || candidate;
+    const id = candidate?.messageId ? `discord:${candidate.messageId}` : target ? getContainerMessageId(target) : "";
+    return id || `dom:${candidate?.container?.tagName || candidate?.tagName || "unknown"}`;
+  }
+
+  function incrementDiagnosticSkip(diagnostics, field, id) {
+    diagnostics[field] += 1;
+    if (diagnostics.skippedIds.length < 25) diagnostics.skippedIds.push({ id: id || "unknown", reason: field });
+  }
+
+  function publishCaptureDiagnostics(diagnostics) {
+    lastCaptureDiagnostics = diagnostics;
+    extensionState.lastCaptureDiagnostics = diagnostics;
+    window.__DISCORD_DM_EXPORT_DEBUG_LAST_CAPTURE__ = diagnostics;
+    if (window.__DISCORD_DM_EXPORT_DEBUG__) console.info("Discord DM Export capture diagnostics", diagnostics);
+  }
+
   function getContainerMessageId(container) {
+    if (!container) return "";
     return extractSnowflakeFromRecordId(getStableMessageId(container))
       || messageSpecificSnowflake(container?.querySelector?.('[id^="message-content-"]')?.id, "descendant-message-content-id");
   }
@@ -607,29 +680,38 @@
     return new Set([...fingerprintsById].filter(([, fingerprints]) => fingerprints.size > 1).map(([id]) => id));
   }
 
-  function parseMessage(candidate, domIndex) {
+  function parseMessage(candidate, domIndex, diagnostics = null) {
     const contentNode = candidate?.contentNode || null;
     const node = candidate?.container || candidate;
-    if (!node || isReactionOrControl(node)) return null;
+    if (!node || isReactionOrControl(node)) {
+      if (diagnostics) incrementDiagnosticSkip(diagnostics, "skippedInvalidCandidate", candidateDiagnosticId(candidate));
+      return null;
+    }
     const contentMessageId = extractMessageContentId(contentNode);
+    const id = contentMessageId ? `discord:${contentMessageId}` : getStableMessageId(node);
+    const snowflake = contentMessageId || extractSnowflakeFromRecordId(id);
     const timestamp = node.querySelector('time[datetime]')?.getAttribute("datetime") || contentNode?.closest?.('[aria-labelledby]')?.querySelector?.('time[datetime]')?.getAttribute("datetime") || "";
     const exactDate = parseExactTimestamp(timestamp);
     const dividerDate = exactDate ? "" : findNearestDateDivider(node);
-    const isoDate = exactDate || dividerDate;
+    const snowflakeDate = exactDate || dividerDate ? "" : isoDateFromSnowflake(snowflake);
+    const isoDate = exactDate || dividerDate || snowflakeDate;
+    const timestampSource = exactDate ? "datetime" : dividerDate ? "divider" : snowflakeDate ? "snowflake" : "unknown";
     const hasExactTimestamp = Boolean(exactDate);
     const authorText = getAuthor(node);
     const speaker = authorText ? speakerFor(authorText) : lastSpeaker;
     const text = contentNode ? getMessageTextFromContentNode(contentNode) : getMessageText(node);
     const markers = getMarkers(node, speaker);
     const body = [text, ...markers].filter(Boolean).join("\n").trim();
-    if (!body) return null;
+    if (!body) {
+      if (diagnostics) incrementDiagnosticSkip(diagnostics, "skippedEmptyBody", id || candidateDiagnosticId(candidate));
+      return null;
+    }
     if (speaker) lastSpeaker = speaker;
     if (isoDate) lastIsoDate = isoDate;
-    const id = contentMessageId ? `discord:${contentMessageId}` : getStableMessageId(node);
     const effectiveIsoDate = isoDate || lastIsoDate;
     const fallbackDeduplicationKey = buildFallbackDeduplicationKey({ speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, markers });
     const key = id || fallbackDeduplicationKey;
-    return { id, deduplicationKey: key, fallbackDeduplicationKey, speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, domIndex };
+    return { id, deduplicationKey: key, fallbackDeduplicationKey, speaker, unknownSpeaker: speaker === "UNKNOWN", text: body, isoDate: effectiveIsoDate, timestampSource, hasExactTimestamp, domIndex };
   }
 
   function mergeMessageRecord(existing, parsed) {
@@ -637,6 +719,7 @@
     const merged = { ...existing };
     if ((merged.speaker === "UNKNOWN" || !merged.speaker) && parsed.speaker && parsed.speaker !== "UNKNOWN") {
       merged.speaker = parsed.speaker;
+      merged.unknownSpeaker = false;
       changed = true;
     }
     if (!merged.isoDate && parsed.isoDate) {
@@ -646,6 +729,11 @@
     if (!merged.hasExactTimestamp && parsed.hasExactTimestamp) {
       merged.isoDate = parsed.isoDate;
       merged.hasExactTimestamp = true;
+      merged.timestampSource = parsed.timestampSource;
+      changed = true;
+    }
+    if ((!merged.timestampSource || merged.timestampSource === "unknown" || merged.timestampSource === "snowflake") && parsed.timestampSource && parsed.timestampSource !== "unknown" && parsed.timestampSource !== "snowflake") {
+      merged.timestampSource = parsed.timestampSource;
       changed = true;
     }
     if (normalizeMessageText(parsed.text).length > normalizeMessageText(merged.text).length) {
@@ -890,6 +978,17 @@
   function extractSnowflakeFromRecordId(id) {
     const match = String(id || "").match(/^discord:(\d{15,25})$/);
     return match?.[1] || "";
+  }
+
+  function isoDateFromSnowflake(snowflake) {
+    if (!/^\d{15,25}$/.test(String(snowflake || ""))) return "";
+    try {
+      const timestampMs = Number((BigInt(snowflake) >> 22n) + 1420070400000n);
+      const date = new Date(timestampMs);
+      return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+    } catch {
+      return "";
+    }
   }
 
   function calendarDay(isoDate) {

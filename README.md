@@ -34,7 +34,7 @@ It does not work with:
 
 The extension does not auto-scroll. You choose where to start, click Start Recording, and scroll manually through the DM.
 
-Discord only loads part of a conversation at a time, so the extension can only capture messages that are loaded while recording. It scans currently loaded messages when recording starts, scans loaded messages while you manually scroll, and runs a final loaded-message scan when recording ends. It still does not auto-scroll or use Discord’s API.
+Discord only loads part of a conversation at a time, so the extension can only capture messages that are loaded while recording. It scans currently loaded messages when recording starts, scans loaded messages while you manually scroll, and runs a final loaded-message scan when recording ends. Capture uses Discord `message-content` nodes when available, derives fallback timestamps from Discord message IDs when visible timestamps or date dividers are unavailable, and exposes debug diagnostics for troubleshooting capture skips. It still does not auto-scroll or use Discord’s API.
 
 ## Recording Modes
 
