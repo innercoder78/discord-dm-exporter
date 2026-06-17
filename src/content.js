@@ -34,6 +34,8 @@
   let overlayVisible = false;
   let messageObserver = extensionState.messageObserver || null;
   let observedMessageContainer = extensionState.observedMessageContainer || null;
+  let scrollCaptureTarget = extensionState.scrollCaptureTarget || null;
+  let scrollCaptureTimeoutId = extensionState.scrollCaptureTimeoutId || 0;
   let captureScheduled = false;
   let captureTimeoutId = extensionState.captureTimeoutId || 0;
   let lastCaptureStartedAt = extensionState.lastCaptureStartedAt || 0;
@@ -130,6 +132,7 @@
     }
     observedMessageContainer = target;
     extensionState.observedMessageContainer = target;
+    startScrollCaptureListener(target);
     messageObserver = new MutationObserver((mutations) => {
       if (recordingState !== "recording") return;
       const hasRelevantMutation = mutations.some((mutation) => !isInsideOverlay(mutation.target));
@@ -142,6 +145,7 @@
 
   function stopMessageObserver() {
     if (messageObserver) messageObserver.disconnect();
+    stopScrollCaptureListener();
     if (captureTimeoutId) window.clearTimeout(captureTimeoutId);
     messageObserver = null;
     observedMessageContainer = null;
@@ -150,6 +154,52 @@
     extensionState.messageObserver = null;
     extensionState.observedMessageContainer = null;
     extensionState.captureTimeoutId = 0;
+  }
+
+  function startScrollCaptureListener(messageContainer) {
+    stopScrollCaptureListener();
+    const target = findScrollCaptureTarget(messageContainer);
+    if (!target) return;
+    scrollCaptureTarget = target;
+    extensionState.scrollCaptureTarget = target;
+    target.addEventListener("scroll", handleManualScroll, { passive: true });
+  }
+
+  function stopScrollCaptureListener() {
+    if (scrollCaptureTarget) scrollCaptureTarget.removeEventListener("scroll", handleManualScroll);
+    if (scrollCaptureTimeoutId) window.clearTimeout(scrollCaptureTimeoutId);
+    scrollCaptureTarget = null;
+    scrollCaptureTimeoutId = 0;
+    extensionState.scrollCaptureTarget = null;
+    extensionState.scrollCaptureTimeoutId = 0;
+  }
+
+  function handleManualScroll(event) {
+    if (recordingState !== "recording" || isInsideOverlay(event.target)) return;
+    if (scrollCaptureTimeoutId) window.clearTimeout(scrollCaptureTimeoutId);
+    scrollCaptureTimeoutId = window.setTimeout(() => {
+      scrollCaptureTimeoutId = 0;
+      extensionState.scrollCaptureTimeoutId = 0;
+      scheduleCapture();
+    }, 500);
+    extensionState.scrollCaptureTimeoutId = scrollCaptureTimeoutId;
+  }
+
+  function findScrollCaptureTarget(messageContainer) {
+    const candidates = [
+      messageContainer,
+      messageContainer?.parentElement,
+      messageContainer?.closest?.('[class*="scroller"], [data-list-id="chat-messages"], [role="log"], main'),
+      ...[...document.querySelectorAll('[class*="scroller"], [data-list-id="chat-messages"], [role="log"], main')]
+    ].filter((element) => element && !isInsideOverlay(element));
+    return candidates.find(isScrollableElement) || messageContainer || null;
+  }
+
+  function isScrollableElement(element) {
+    if (!element || element === document || element === document.documentElement || element === document.body) return false;
+    const style = window.getComputedStyle(element);
+    const canScroll = /(auto|scroll|overlay)/i.test(`${style.overflowY} ${style.overflow}`);
+    return canScroll && element.scrollHeight > element.clientHeight;
   }
 
   function findMessageListContainer() {
@@ -310,10 +360,11 @@
       recordingState = "recording";
       await chrome.storage.local.set({ messages, captureCounter, recordingState: "recording" });
       startMessageObserver();
-      scheduleCapture();
+      await captureLoadedMessages();
       renderOverlay();
     }
     if (action === "stop") {
+      await captureLoadedMessages();
       stopMessageObserver();
       recordingState = "stopped";
       exportFilename = defaultFilename();
