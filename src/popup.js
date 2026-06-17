@@ -8,7 +8,8 @@ const DEFAULT_SETTINGS = {
   everythingMode: false,
   includeTimestamps: false,
   ignoreReactions: true,
-  allowUnknownDateRange: false
+  allowUnknownDateRange: false,
+  developerMode: false
 };
 
 const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
@@ -26,7 +27,8 @@ const fields = {
   startDate: document.querySelector("#start-date"),
   endDate: document.querySelector("#end-date"),
   everythingMode: document.querySelector("#everything-mode"),
-  includeTimestamps: document.querySelector("#include-timestamps")
+  includeTimestamps: document.querySelector("#include-timestamps"),
+  developerMode: document.querySelector("#developer-mode")
 };
 const statusEl = document.querySelector("#status");
 const instructionsEl = document.querySelector("#mode-instructions");
@@ -62,7 +64,8 @@ function readSettings() {
     everythingMode: fields.everythingMode.checked,
     includeTimestamps: fields.includeTimestamps.checked,
     ignoreReactions: true,
-    allowUnknownDateRange: false
+    allowUnknownDateRange: false,
+    developerMode: fields.developerMode.checked
   };
 }
 
@@ -71,6 +74,9 @@ fields.startDate.addEventListener("input", updateValidation);
 fields.endDate.addEventListener("input", updateValidation);
 fields.selfDisplayName.addEventListener("input", updateValidation);
 fields.otherDisplayName.addEventListener("input", updateValidation);
+fields.developerMode.addEventListener("change", async () => {
+  await chrome.storage.local.set({ settings: readSettings() });
+});
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   startButton.disabled = true;
