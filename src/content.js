@@ -28,6 +28,7 @@
   let totalSeen = 0;
   let captureCounter = 0;
   let lastSpeaker = "UNKNOWN";
+  let lastSpeakerNode = null;
   let lastIsoDate = "";
   let unknownWarningAccepted = false;
   let unknownSkipped = 0;
@@ -320,7 +321,14 @@
   }
 
   function canRecordNow() {
-    return dmStatus().ok && hasRequiredDates();
+    return dmStatus().ok && hasRequiredDates() && !isReversedDateRange();
+  }
+
+  function isReversedDateRange() {
+    if (settings.everythingMode || !settings.startDate || !settings.endDate) return false;
+    const startBoundaryMs = localDateBoundaryMs(settings.startDate);
+    const endBoundaryMs = localDateBoundaryMs(settings.endDate);
+    return !Number.isNaN(startBoundaryMs) && !Number.isNaN(endBoundaryMs) && startBoundaryMs > endBoundaryMs;
   }
 
   function renderOverlay() {
@@ -355,7 +363,7 @@
     const range = settings.everythingMode ? "" : `<p>Date range: ${settings.startDate || "not set"} to ${settings.endDate || "not set"}</p>`;
     const mapping = `<p>Log labels: self = ${escapeHtml(settings.selfLabel)}, other = ${escapeHtml(settings.otherLabel)}</p><p>Discord names: self = ${escapeHtml(settings.selfDisplayName || "not set")}, other = ${escapeHtml(settings.otherDisplayName || "not set")}</p>`;
     const displayNameWarning = (!settings.selfDisplayName || !settings.otherDisplayName) ? `<p class="warn">For best results, enter both Discord display names without server tags. If these are blank, speaker detection may be less accurate.</p>` : "";
-    const dateWarning = !hasRequiredDates() ? `<p class="warn">${missingDatesText}</p>` : "";
+    const dateWarning = !hasRequiredDates() ? `<p class="warn">${missingDatesText}</p>` : isReversedDateRange() ? `<p class="warn">Start date must be on or before end date.</p>` : "";
     const everythingNote = settings.everythingMode ? `<p class="warn">EVERYTHING mode records every loaded message it sees while recording. If you need exact start and end boundaries, use Date Range. Otherwise, you may need to manually trim a few extra lines from the TXT file afterward.</p>` : "";
 
     if (recordingState === "recording") {
@@ -393,7 +401,7 @@
     const action = event.target?.dataset?.action;
     if (!action) return;
     if (action === "start") {
-      if (!canRecordNow()) { renderOverlay(); return; }
+      if (!canRecordNow() || isReversedDateRange()) { renderOverlay(); return; }
       totalSeen = 0;
       captureCounter = 0;
       messages = [];
@@ -401,6 +409,7 @@
       seenObservedKeys.clear();
       skippedUnknownKeys.clear();
       lastSpeaker = "UNKNOWN";
+      lastSpeakerNode = null;
       lastIsoDate = "";
       unknownWarningAccepted = false;
       unknownSkipped = 0;
@@ -439,6 +448,7 @@
     totalSeen = 0;
     captureCounter = 0;
     lastSpeaker = "UNKNOWN";
+    lastSpeakerNode = null;
     lastIsoDate = "";
     unknownWarningAccepted = false;
     unknownSkipped = 0;
@@ -606,12 +616,70 @@
     if (!node || isInsideOverlay(node) || isReactionOrControl(node)) return false;
     if (node.closest?.('[role="textbox"], [contenteditable="true"], form, [class*="channelTextArea"], [class*="slateTextArea"], [class*="replyBar"], [class*="attachedBars"]')) return false;
     if (node.matches('[data-list-id="chat-messages"], [role="log"], main, ol') && !node.matches('li, [role="article"]')) return false;
-    return Boolean(node.querySelector('time[datetime], [class*="messageContent"], a[href*="cdn.discordapp.com"], [class*="attachment"], [class*="voiceMessage"], [aria-label*="Voice message" i]'));
+    if (!hasMessageSpecificEvidence(node)) return false;
+    return Boolean(getOwnedTimestamp(node) || getOwnedContentNodes(node).length || getOwnedMediaNodes(node).length || getOwnedVoiceNodes(node).length);
   }
 
   function countMessageLikeDescendants(root) {
     return uniqueElements([...root.querySelectorAll('[class*="messageContent"], time[datetime], li[id^="chat-messages-"], [data-list-item-id*="chat-messages"]')])
       .filter((node) => !isInsideOverlay(node)).length;
+  }
+
+
+  function hasMessageSpecificEvidence(node) {
+    if (!node) return false;
+    const ownId = getStableMessageId(node);
+    if (ownId) return true;
+    if (node.matches?.('li, [role="article"], [class*="messageListItem"]')) {
+      return Boolean(getOwnedTimestamp(node) || getOwnedContentNodes(node).length || getOwnedMediaNodes(node).length || getOwnedVoiceNodes(node).length);
+    }
+    return false;
+  }
+
+  function ownsDescendant(candidate, descendant) {
+    if (!candidate || !descendant || !candidate.contains(descendant)) return false;
+    const owner = normalizeMessageCandidate(descendant);
+    if (owner === candidate) return true;
+    return Boolean(getStableMessageId(candidate) && candidate.matches?.('li[id^="chat-messages-"], li[data-list-item-id*="chat-messages"]') && owner && candidate.contains(owner));
+  }
+
+  function getOwnedContentNodes(node) {
+    return [...node.querySelectorAll('[id^="message-content-"]')]
+      .filter(isValidMessageContentNode)
+      .filter((contentNode) => ownsDescendant(node, contentNode));
+  }
+
+  function getOwnedTimestamp(node) {
+    return [...node.querySelectorAll('time[datetime]')]
+      .find((timeNode) => ownsDescendant(node, timeNode)) || null;
+  }
+
+  function getOwnedMediaNodes(node) {
+    return [...node.querySelectorAll('a[href*="cdn.discordapp.com"], [class*="attachment"], [class*="imageWrapper"], [class*="embedWrapper"], [class*="sticker"]')]
+      .filter((mediaNode) => ownsDescendant(node, mediaNode) && !isReplyPreviewElement(mediaNode));
+  }
+
+  function getOwnedVoiceNodes(node) {
+    return [...node.querySelectorAll('[class*="voiceMessage"], [aria-label*="Voice message" i]')]
+      .filter((voiceNode) => ownsDescendant(node, voiceNode) && !isReplyPreviewElement(voiceNode));
+  }
+
+  function inferContinuedSpeaker(node) {
+    if (!node || !lastSpeakerNode || lastSpeaker === "UNKNOWN") return "UNKNOWN";
+    const previous = previousElementIgnoringEmptyText(node);
+    if (previous !== lastSpeakerNode) return "UNKNOWN";
+    if (isLikelyBoundaryElement(previous) || isLikelyBoundaryElement(node)) return "UNKNOWN";
+    if (getAuthor(node)) return "UNKNOWN";
+    return lastSpeaker;
+  }
+
+  function previousElementIgnoringEmptyText(node) {
+    return node?.previousElementSibling || null;
+  }
+
+  function isLikelyBoundaryElement(node) {
+    const text = (node?.textContent || "").trim();
+    return Boolean(node?.matches?.('[role="separator"], [class*="divider"], [class*="systemMessage"]')) || Boolean(parseDividerDate(text));
   }
 
   function findSuspiciousStableIds(parsedMessages) {
@@ -634,7 +702,7 @@
     const contentMessageId = extractMessageContentId(contentNode);
     const id = contentMessageId ? `discord:${contentMessageId}` : getStableMessageId(node);
     const snowflake = contentMessageId || extractSnowflakeFromRecordId(id);
-    const timestamp = node.querySelector('time[datetime]')?.getAttribute("datetime") || contentNode?.closest?.('[aria-labelledby]')?.querySelector?.('time[datetime]')?.getAttribute("datetime") || "";
+    const timestamp = getOwnedTimestamp(node)?.getAttribute("datetime") || "";
     const exactDate = parseExactTimestamp(timestamp);
     const dividerDate = exactDate ? "" : findNearestDateDivider(node);
     const snowflakeDate = exactDate || dividerDate ? "" : isoDateFromSnowflake(snowflake);
@@ -642,14 +710,20 @@
     const timestampSource = exactDate ? "datetime" : dividerDate ? "divider" : snowflakeDate ? "snowflake" : "unknown";
     const hasExactTimestamp = Boolean(exactDate);
     const authorText = getAuthor(node);
-    const speaker = authorText ? speakerFor(authorText) : lastSpeaker;
+    const speaker = authorText ? speakerFor(authorText) : inferContinuedSpeaker(node);
     const text = contentNode ? getMessageTextFromContentNode(contentNode) : getMessageText(node);
     const markers = getMarkers(node, speaker);
     const body = [text, ...markers].filter(Boolean).join("\n").trim();
     if (!body) {
       return null;
     }
-    if (speaker) lastSpeaker = speaker;
+    if (speaker && speaker !== "UNKNOWN") {
+      lastSpeaker = speaker;
+      lastSpeakerNode = node;
+    } else {
+      lastSpeaker = "UNKNOWN";
+      lastSpeakerNode = null;
+    }
     if (isoDate) lastIsoDate = isoDate;
     const effectiveIsoDate = isoDate || lastIsoDate;
     const fallbackDeduplicationKey = buildFallbackDeduplicationKey({ speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, markers });
@@ -696,9 +770,7 @@
       { name: "id", value: node.id },
       { name: "data-list-item-id", value: node.getAttribute("data-list-item-id") },
       { name: "data-message-id", value: node.getAttribute("data-message-id") },
-      { name: "data-item-id", value: node.getAttribute("data-item-id") },
-      { name: "descendant-data-list-item-id", value: node.querySelector("[data-list-item-id*='chat-messages']")?.getAttribute("data-list-item-id") },
-      { name: "descendant-data-message-id", value: node.querySelector("[data-message-id]")?.getAttribute("data-message-id") }
+      { name: "data-item-id", value: node.getAttribute("data-item-id") }
     ].filter((attribute) => attribute.value);
 
     for (const attribute of attributes) {
@@ -758,8 +830,7 @@
   }
 
   function getMessageText(node) {
-    return [...node.querySelectorAll('[id^="message-content-"]')]
-      .filter(isValidMessageContentNode)
+    return getOwnedContentNodes(node)
       .map(getMessageTextFromContentNode)
       .filter(Boolean)
       .join("\n") || getMessageTextFromLegacyContent(node);
@@ -844,8 +915,8 @@
 
   function getMarkers(node, speaker) {
     const markers = [];
-    const files = node.querySelectorAll('a[href*="cdn.discordapp.com"], [class*="attachment"], [class*="imageWrapper"]');
-    const voice = node.querySelectorAll('[class*="voiceMessage"], [aria-label*="Voice message" i]');
+    const files = getOwnedMediaNodes(node);
+    const voice = getOwnedVoiceNodes(node);
     if (voice.length) markers.push(voice.length === 1 ? "[VOICE MESSAGE]" : `[${voice.length} VOICE MESSAGES]`);
     if (files.length && !voice.length) markers.push(`[${speaker} SENT A FILE]`);
     return markers;
@@ -1035,16 +1106,16 @@
     const date = new Date(isoDate);
     if (Number.isNaN(date.getTime())) return isoDate.slice(0, 16).replace("T", " ");
 
-    const year = String(date.getUTCFullYear());
-    const month = pad2(date.getUTCMonth() + 1);
-    const day = pad2(date.getUTCDate());
+    const year = String(date.getFullYear());
+    const month = pad2(date.getMonth() + 1);
+    const day = pad2(date.getDate());
     const formattedDate = {
       "DD/MM/YYYY": `${day}/${month}/${year}`,
       "YYYY/MM/DD": `${year}/${month}/${day}`
     }[dateFormat] || `${month}/${day}/${year}`;
 
-    const hours = date.getUTCHours();
-    const minutes = pad2(date.getUTCMinutes());
+    const hours = date.getHours();
+    const minutes = pad2(date.getMinutes());
     if (timeFormat === "24") return `${formattedDate} ${pad2(hours)}:${minutes}`;
 
     const period = hours >= 12 ? "PM" : "AM";

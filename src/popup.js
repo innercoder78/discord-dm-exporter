@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
+const reversedDatesText = "Start date must be on or before end date.";
 const displayNameWarningText = "For best results, enter both Discord display names without server tags. If these are blank, speaker detection may be less accurate.";
 const everythingText = "Open the DM you want to log, scroll to where you want recording to begin, then click START.";
 const dateRangeText = "Open the DM you want to log, scroll to where you want recording to begin, then click START.";
@@ -98,6 +99,11 @@ form.addEventListener("submit", async (event) => {
       updateValidation();
       return;
     }
+    if (isReversedDateRange(settings)) {
+      statusEl.textContent = reversedDatesText;
+      updateValidation();
+      return;
+    }
     await chrome.storage.local.set({ settings });
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -170,6 +176,7 @@ function showPopupError(prefix, error) {
 function updateValidation() {
   const everything = fields.everythingMode.checked;
   const datesMissing = !everything && (!fields.startDate.value || !fields.endDate.value);
+  const datesReversed = !everything && isReversedDateRange({ startDate: fields.startDate.value, endDate: fields.endDate.value, everythingMode: everything });
   const displayNamesMissing = !fields.selfDisplayName.value.trim() || !fields.otherDisplayName.value.trim();
 
   fields.startDate.disabled = everything;
@@ -177,14 +184,30 @@ function updateValidation() {
   fields.startDate.required = !everything;
   fields.endDate.required = !everything;
   instructionsEl.textContent = everything ? everythingText : dateRangeText;
-  dateWarningEl.classList.toggle("hidden", !datesMissing);
+  dateWarningEl.classList.toggle("hidden", !datesMissing && !datesReversed);
+  dateWarningEl.textContent = datesReversed ? reversedDatesText : missingDatesText;
   displayNameWarningEl.classList.toggle("hidden", !displayNamesMissing);
   displayNameWarningEl.textContent = displayNameWarningText;
-  startButton.disabled = datesMissing;
+  startButton.disabled = datesMissing || datesReversed;
 }
 
 async function showTabWarningIfNeeded() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const isDiscordWeb = tab?.url?.startsWith("https://discord.com/");
   warningEl.classList.toggle("hidden", Boolean(isDiscordWeb));
+}
+
+
+function isReversedDateRange(settings) {
+  if (settings.everythingMode || !settings.startDate || !settings.endDate) return false;
+  const start = localDateBoundaryMs(settings.startDate);
+  const end = localDateBoundaryMs(settings.endDate);
+  return !Number.isNaN(start) && !Number.isNaN(end) && start > end;
+}
+
+function localDateBoundaryMs(dateString) {
+  const match = String(dateString || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return NaN;
+  const [, year, month, day] = match;
+  return new Date(Number(year), Number(month) - 1, Number(day)).getTime();
 }
