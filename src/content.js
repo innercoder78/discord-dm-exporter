@@ -12,10 +12,9 @@
     everythingMode: false,
     includeTimestamps: false,
     ignoreReactions: true,
-    allowUnknownDateRange: false,
-    developerMode: false
+    allowUnknownDateRange: false
   };
-  const STORE_KEYS = ["settings", "messages", "recordingState", "captureCounter", "debugDiagnostics"];
+  const STORE_KEYS = ["settings", "messages", "recordingState", "captureCounter"];
   const overlayId = "discord-dm-log-exporter-overlay";
   const unsupportedText = "This extension is designed only for one-on-one Discord DMs.\n\nServer channels, group chats, threads, forums, and voice channels are not supported.";
   const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
@@ -43,8 +42,6 @@
   let captureTimeoutId = extensionState.captureTimeoutId || 0;
   let lastCaptureStartedAt = extensionState.lastCaptureStartedAt || 0;
   let lastOverlaySignature = extensionState.lastOverlaySignature || "";
-  let lastCaptureDiagnostics = extensionState.lastCaptureDiagnostics || null;
-  let debugDiagnostics = extensionState.debugDiagnostics || [];
   let exportFilename = defaultFilename();
   const minCaptureIntervalMs = 750;
 
@@ -56,27 +53,12 @@
     messages = stored.messages || [];
     recordingState = stored.recordingState || "idle";
     captureCounter = Number(stored.captureCounter || messages.length || 0);
-    debugDiagnostics = Array.isArray(stored.debugDiagnostics) ? stored.debugDiagnostics : [];
-    extensionState.debugDiagnostics = debugDiagnostics;
     seenKeys = new Set(messages.map((message) => messageKey(message)));
     overlayVisible = recordingState === "recording" || recordingState === "stopped";
     registerRuntimeMessageListener();
     registerStorageChangeListener();
-    registerDebugHelpers();
     renderOverlay();
     if (recordingState === "recording") startMessageObserver();
-  }
-
-  function registerDebugHelpers() {
-    window.__DISCORD_DM_EXPORT_DEBUG_SCAN__ = () => {
-      const nodes = findLoadedMessageCandidates();
-      const diagnostics = createCaptureDiagnostics("manual-debug-scan", nodes);
-      const parsedMessages = nodes.map((node, domIndex) => parseMessage(node, domIndex, diagnostics)).filter(Boolean);
-      diagnostics.parsedMessages = parsedMessages.length;
-      diagnostics.parsedRecords = parsedMessages.map((message) => diagnosticRecordFromMessage(message));
-      publishCaptureDiagnostics(diagnostics);
-      return diagnostics;
-    };
   }
 
   function registerRuntimeMessageListener() {
@@ -131,10 +113,6 @@
     }
     if (changes.recordingState) recordingState = changes.recordingState.newValue || "idle";
     if (changes.captureCounter) captureCounter = Number(changes.captureCounter.newValue || 0);
-    if (changes.debugDiagnostics) {
-      debugDiagnostics = Array.isArray(changes.debugDiagnostics.newValue) ? changes.debugDiagnostics.newValue : [];
-      extensionState.debugDiagnostics = debugDiagnostics;
-    }
     if (changes.recordingState) {
       if (recordingState === "recording") startMessageObserver();
       else stopMessageObserver();
@@ -143,7 +121,19 @@
   }
 
   function normalizeSettings(value) {
-    return { ...DEFAULT_SETTINGS, ...(value || {}), ignoreReactions: true, allowUnknownDateRange: Boolean(value?.allowUnknownDateRange), developerMode: Boolean(value?.developerMode) };
+    return {
+      ...DEFAULT_SETTINGS,
+      selfLabel: value?.selfLabel || DEFAULT_SETTINGS.selfLabel,
+      otherLabel: value?.otherLabel || DEFAULT_SETTINGS.otherLabel,
+      selfDisplayName: value?.selfDisplayName || "",
+      otherDisplayName: value?.otherDisplayName || "",
+      startDate: value?.startDate || "",
+      endDate: value?.endDate || "",
+      everythingMode: Boolean(value?.everythingMode),
+      includeTimestamps: Boolean(value?.includeTimestamps),
+      ignoreReactions: true,
+      allowUnknownDateRange: Boolean(value?.allowUnknownDateRange)
+    };
   }
 
   function startMessageObserver() {
@@ -370,8 +360,7 @@
 
     if (recordingState === "recording") {
       const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
-      const debugLine = lastCaptureDiagnostics ? `<p style="font-size:12px;opacity:.8">Found: ${lastCaptureDiagnostics.foundContentNodes} | Parsed: ${lastCaptureDiagnostics.parsedMessages} | Saved: ${lastCaptureDiagnostics.savedNewMessages} | Skipped date: ${lastCaptureDiagnostics.skippedMissingDate} | Skipped unknown: ${lastCaptureDiagnostics.skippedUnknownSpeaker}</p>` : "";
-      updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${debugLine}${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
+      updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
     } else if (recordingState === "stopped") {
       updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p>${timestampFormatControls()}<button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
@@ -415,10 +404,8 @@
       lastIsoDate = "";
       unknownWarningAccepted = false;
       unknownSkipped = 0;
-      debugDiagnostics = [];
-      extensionState.debugDiagnostics = debugDiagnostics;
       recordingState = "recording";
-      await chrome.storage.local.set({ messages, captureCounter, recordingState: "recording", debugDiagnostics });
+      await chrome.storage.local.set({ messages, captureCounter, recordingState: "recording" });
       startMessageObserver();
       await captureLoadedMessages({ reason: "start-recording" });
       renderOverlay();
@@ -455,9 +442,8 @@
     lastIsoDate = "";
     unknownWarningAccepted = false;
     unknownSkipped = 0;
-    if (clearMessages) { debugDiagnostics = []; extensionState.debugDiagnostics = debugDiagnostics; }
     const updates = { captureCounter: 0, recordingState: "idle" };
-    if (clearMessages) { updates.messages = []; updates.debugDiagnostics = debugDiagnostics; }
+    if (clearMessages) updates.messages = [];
     await chrome.storage.local.set(updates);
     renderOverlay();
   }
@@ -469,33 +455,27 @@
   }
 
   async function captureLoadedMessages({ allowStopped = false, reason = "mutation" } = {}) {
-    const captureReason = allowStopped ? "pre-export" : reason;
     const canCaptureStoppedPage = allowStopped && recordingState === "stopped";
     if (recordingState !== "recording" && !canCaptureStoppedPage) return;
     if (!canRecordNow()) return;
     const nodes = findLoadedMessageCandidates();
-    const diagnostics = createCaptureDiagnostics(captureReason, nodes);
     const newMessages = [];
     const parsedMessages = nodes
-      .map((node, domIndex) => parseMessage(node, domIndex, diagnostics))
+      .map((node, domIndex) => parseMessage(node, domIndex))
       .filter(Boolean);
-    diagnostics.parsedMessages = parsedMessages.length;
     const suspiciousStableIds = findSuspiciousStableIds(parsedMessages);
 
     let improvedExisting = false;
     parsedMessages.forEach((parsed) => {
-      diagnostics.parsedRecords.push(diagnosticRecordFromMessage(parsed));
       const key = messageKey(parsed, suspiciousStableIds);
       if (!seenObservedKeys.has(key)) {
         seenObservedKeys.add(key);
         totalSeen += 1;
       }
       if (!settings.everythingMode && !parsed.isoDate) {
-        incrementDiagnosticSkip(diagnostics, "skippedMissingDate", parsed.id || key, parsed);
         return;
       }
       if (!settings.everythingMode && !isInsideRange(parsed.isoDate)) {
-        incrementDiagnosticSkip(diagnostics, "skippedOutOfDateRange", parsed.id || key, parsed);
         return;
       }
       if (!settings.everythingMode && parsed.speaker === "UNKNOWN" && !settings.allowUnknownDateRange && !unknownWarningAccepted) {
@@ -503,7 +483,6 @@
           skippedUnknownKeys.add(key);
           unknownSkipped += 1;
         }
-        incrementDiagnosticSkip(diagnostics, "skippedUnknownSpeaker", parsed.id || key, parsed);
       }
       const existingIndex = messages.findIndex((message) => messageKey(message, suspiciousStableIds) === key);
       if (existingIndex >= 0) {
@@ -511,19 +490,12 @@
         if (merged !== messages[existingIndex]) {
           messages[existingIndex] = merged;
           improvedExisting = true;
-          diagnostics.mergedExistingMessages += 1;
-        } else {
-          incrementDiagnosticSkip(diagnostics, "skippedDuplicate", parsed.id || key, parsed);
         }
       } else if (!seenKeys.has(key)) {
         seenKeys.add(key);
         captureCounter += 1;
         const savedMessage = { ...parsed, deduplicationKey: key, captureIndex: captureCounter };
         newMessages.push(savedMessage);
-        diagnostics.savedRecords.push(diagnosticRecordFromMessage(savedMessage));
-        diagnostics.savedNewMessages += 1;
-      } else {
-        incrementDiagnosticSkip(diagnostics, "skippedDuplicate", parsed.id || key, parsed);
       }
     });
 
@@ -531,7 +503,6 @@
       messages = [...messages, ...newMessages].sort(compareMessages);
       await chrome.storage.local.set({ messages, captureCounter });
     }
-    await publishCaptureDiagnostics(diagnostics);
     renderOverlay();
     if (recordingState === "recording" && observedMessageContainer && !document.contains(observedMessageContainer)) {
       startMessageObserver();
@@ -583,128 +554,6 @@
       .filter((candidate) => !candidate.messageId || !contentMessageIds.has(candidate.messageId));
 
     return [...contentCandidates, ...containerCandidates];
-  }
-
-  function createCaptureDiagnostics(captureReason, candidates) {
-    const root = findMessageListContainer() || document;
-    const scroll = scrollCaptureTarget || findScrollCaptureTarget(root);
-    const candidateRecords = candidates.map((candidate) => diagnosticRecordFromCandidate(candidate));
-    return {
-      captureNumber: debugDiagnostics.length + 1,
-      captureReason,
-      capturedAt: new Date().toISOString(),
-      recordingState,
-      candidateRootUsed: describeDiagnosticRoot(root),
-      scrollTop: scroll ? Number(scroll.scrollTop || 0) : null,
-      scrollHeight: scroll ? Number(scroll.scrollHeight || 0) : null,
-      clientHeight: scroll ? Number(scroll.clientHeight || 0) : null,
-      foundContentNodes: document.querySelectorAll('[id^="message-content-"]').length,
-      foundContainerCandidates: candidates.filter((candidate) => candidate?.container && !candidate?.contentNode).length,
-      totalCandidates: candidates.length,
-      parsedMessages: 0,
-      savedNewMessages: 0,
-      mergedExistingMessages: 0,
-      duplicateCount: 0,
-      skippedInvalidCandidate: 0,
-      skippedEmptyBody: 0,
-      skippedMissingDate: 0,
-      skippedOutOfDateRange: 0,
-      skippedUnknownSpeaker: 0,
-      skippedExportFiltered: 0,
-      firstCandidateRecords: firstLastFirst(candidateRecords),
-      lastCandidateRecords: firstLastLast(candidateRecords),
-      parsedRecords: [],
-      savedRecords: [],
-      exportedRecords: [],
-      skippedRecords: []
-    };
-  }
-
-  function diagnosticRecordFromCandidate(candidate, parsed = null, skipReason = "") {
-    const target = candidate?.container || candidate;
-    const messageId = parsed?.id || candidateDiagnosticId(candidate);
-    const text = parsed?.text || previewCandidateText(candidate);
-    return {
-      messageId,
-      recordId: parsed ? messageKey(parsed) : messageId,
-      speaker: parsed?.speaker || "UNKNOWN",
-      isoDate: parsed?.isoDate || "",
-      timestampSource: parsed?.timestampSource || "unknown",
-      textLength: text.length,
-      textPreview: normalizePreview(text),
-      skipReason,
-      tag: target?.tagName || "unknown"
-    };
-  }
-
-  function diagnosticRecordFromMessage(message, skipReason = "") {
-    return {
-      messageId: message.id || "",
-      recordId: messageKey(message),
-      speaker: message.speaker || "UNKNOWN",
-      isoDate: message.isoDate || "",
-      timestampSource: message.timestampSource || "unknown",
-      textLength: String(message.text || "").length,
-      textPreview: normalizePreview(message.text),
-      skipReason
-    };
-  }
-
-  function candidateDiagnosticId(candidate) {
-    const target = candidate?.container || candidate;
-    const id = candidate?.messageId ? `discord:${candidate.messageId}` : target ? getContainerMessageId(target) : "";
-    return id || `dom:${candidate?.container?.tagName || candidate?.tagName || "unknown"}`;
-  }
-
-  function incrementDiagnosticSkip(diagnostics, field, id, parsed = null, reason = "") {
-    diagnostics[field] += 1;
-    if (field === "skippedDuplicate") diagnostics.duplicateCount += 1;
-    const skipReason = reason || diagnosticFieldReason(field);
-    if (diagnostics.skippedRecords.length < 250) {
-      diagnostics.skippedRecords.push({
-        ...(parsed ? diagnosticRecordFromMessage(parsed, skipReason) : { messageId: id || "unknown", recordId: id || "unknown", speaker: "UNKNOWN", isoDate: "", timestampSource: "unknown", textLength: 0, textPreview: "", skipReason }),
-        captureReason: diagnostics.captureReason
-      });
-    }
-  }
-
-  function diagnosticFieldReason(field) {
-    return {
-      skippedInvalidCandidate: "invalid-candidate",
-      skippedEmptyBody: "empty-body",
-      skippedMissingDate: "missing-date",
-      skippedOutOfDateRange: "out-of-date-range",
-      skippedUnknownSpeaker: "unknown-speaker",
-      skippedDuplicate: "duplicate",
-      skippedExportFiltered: "export-filtered"
-    }[field] || "parse-error";
-  }
-
-  async function publishCaptureDiagnostics(diagnostics) {
-    diagnostics.parsedRecords = firstLastFirst(diagnostics.parsedRecords).concat(firstLastLast(diagnostics.parsedRecords));
-    diagnostics.savedRecords = firstLastFirst(messages.map((message) => diagnosticRecordFromMessage(message))).concat(firstLastLast(messages.map((message) => diagnosticRecordFromMessage(message))));
-    lastCaptureDiagnostics = diagnostics;
-    extensionState.lastCaptureDiagnostics = diagnostics;
-    window.__DISCORD_DM_EXPORT_DEBUG_LAST_CAPTURE__ = diagnostics;
-    if (settings.developerMode) {
-      debugDiagnostics = [...debugDiagnostics, diagnostics].slice(-200);
-      extensionState.debugDiagnostics = debugDiagnostics;
-      await chrome.storage.local.set({ debugDiagnostics });
-    }
-    if (window.__DISCORD_DM_EXPORT_DEBUG__) console.info("Discord DM Export capture diagnostics", diagnostics);
-  }
-
-  function describeDiagnosticRoot(root) {
-    if (!root || root === document) return "document";
-    return [root.tagName?.toLowerCase(), root.id ? `#${root.id}` : "", root.getAttribute?.("data-list-id") ? `[data-list-id=${root.getAttribute("data-list-id")}]` : "", root.getAttribute?.("role") ? `[role=${root.getAttribute("role")}]` : ""].join("");
-  }
-
-  function firstLastFirst(records) { return records.slice(0, 10); }
-  function firstLastLast(records) { return records.slice(Math.max(records.length - 10, 0)); }
-  function normalizePreview(value) { return normalizeMessageText(value).slice(0, 80); }
-  function previewCandidateText(candidate) {
-    const node = candidate?.contentNode || candidate?.container || candidate;
-    return cleanMessageText(node?.innerText || node?.textContent || "");
   }
 
   function getContainerMessageId(container) {
@@ -776,11 +625,10 @@
     return new Set([...fingerprintsById].filter(([, fingerprints]) => fingerprints.size > 1).map(([id]) => id));
   }
 
-  function parseMessage(candidate, domIndex, diagnostics = null) {
+  function parseMessage(candidate, domIndex) {
     const contentNode = candidate?.contentNode || null;
     const node = candidate?.container || candidate;
     if (!node || isReactionOrControl(node)) {
-      if (diagnostics) incrementDiagnosticSkip(diagnostics, "skippedInvalidCandidate", candidateDiagnosticId(candidate));
       return null;
     }
     const contentMessageId = extractMessageContentId(contentNode);
@@ -799,7 +647,6 @@
     const markers = getMarkers(node, speaker);
     const body = [text, ...markers].filter(Boolean).join("\n").trim();
     if (!body) {
-      if (diagnostics) incrementDiagnosticSkip(diagnostics, "skippedEmptyBody", id || candidateDiagnosticId(candidate));
       return null;
     }
     if (speaker) lastSpeaker = speaker;
@@ -1045,9 +892,20 @@
   }
 
   function isInsideRange(isoDate) {
-    if (!isoDate) return false;
-    const day = isoDate.slice(0, 10);
-    return day >= settings.startDate && day <= settings.endDate;
+    if (!isoDate || !settings.startDate || !settings.endDate) return false;
+    const messageTimeMs = Date.parse(isoDate);
+    if (Number.isNaN(messageTimeMs)) return false;
+    const startBoundaryMs = localDateBoundaryMs(settings.startDate);
+    const endBoundaryMs = localDateBoundaryMs(settings.endDate, 1);
+    if (Number.isNaN(startBoundaryMs) || Number.isNaN(endBoundaryMs)) return false;
+    return messageTimeMs >= startBoundaryMs && messageTimeMs < endBoundaryMs;
+  }
+
+  function localDateBoundaryMs(dateString, dayOffset = 0) {
+    const match = String(dateString || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return NaN;
+    const [, year, month, day] = match;
+    return new Date(Number(year), Number(month) - 1, Number(day) + dayOffset).getTime();
   }
 
   function compareMessages(a, b) {
@@ -1115,7 +973,6 @@
   async function exportTranscript() {
     await captureLoadedMessages({ allowStopped: true, reason: "pre-export" });
     const timestampFormats = readTimestampFormats();
-    const exportDiagnostics = createExportDiagnostics(messages, messages);
     const transcript = formatTranscript(messages, settings.includeTimestamps, timestampFormats);
     exportFilename = defaultFilename();
     chrome.runtime.sendMessage({ type: "DOWNLOAD_TRANSCRIPT", text: transcript, filename: exportFilename }, async (response) => {
@@ -1123,10 +980,6 @@
       if (lastError || response?.ok === false) {
         showOverlayMessage(`Export failed: ${response?.error || lastError?.message || "Unknown download error."}`);
         return;
-      }
-      if (settings.developerMode) {
-        const debugText = formatDebugTranscript(exportDiagnostics);
-        chrome.runtime.sendMessage({ type: "DOWNLOAD_DEBUG_TRANSCRIPT", text: debugText, filename: debugFilename(exportFilename) });
       }
       messages = [];
       seenKeys.clear();
@@ -1139,83 +992,6 @@
       await chrome.storage.local.set({ messages: [], captureCounter: 0, recordingState: "idle" });
       renderOverlay();
     });
-  }
-
-  function createExportDiagnostics(storedMessages, exportedMessages) {
-    const exportedKeys = new Set(exportedMessages.map((message) => messageKey(message)));
-    const filtered = storedMessages
-      .filter((message) => !exportedKeys.has(messageKey(message)))
-      .map((message) => diagnosticRecordFromMessage(message, "export-filtered"));
-    return {
-      capturedAt: new Date().toISOString(),
-      totalStoredBeforeExport: storedMessages.length,
-      totalAfterExportFiltering: exportedMessages.length,
-      firstStoredRecords: firstLastFirst(storedMessages.map((message) => diagnosticRecordFromMessage(message))),
-      lastStoredRecords: firstLastLast(storedMessages.map((message) => diagnosticRecordFromMessage(message))),
-      firstExportedRecords: firstLastFirst(exportedMessages.map((message) => diagnosticRecordFromMessage(message))),
-      lastExportedRecords: firstLastLast(exportedMessages.map((message) => diagnosticRecordFromMessage(message))),
-      filteredOutRecords: filtered
-    };
-  }
-
-  function formatDebugTranscript(exportDiagnostics) {
-    const lines = [
-      "Discord DM Exporter Developer Mode Diagnostic Log",
-      `Generated: ${new Date().toISOString()}`,
-      `Recording state at export: ${recordingState}`,
-      "",
-      "EXPORT DIAGNOSTICS",
-      `total stored messages before export: ${exportDiagnostics.totalStoredBeforeExport}`,
-      `total messages after export filtering: ${exportDiagnostics.totalAfterExportFiltering}`,
-      "first 10 stored message IDs:", ...formatRecordList(exportDiagnostics.firstStoredRecords),
-      "last 10 stored message IDs:", ...formatRecordList(exportDiagnostics.lastStoredRecords),
-      "first 10 exported message IDs:", ...formatRecordList(exportDiagnostics.firstExportedRecords),
-      "last 10 exported message IDs:", ...formatRecordList(exportDiagnostics.lastExportedRecords),
-      "IDs filtered out during export with reason:", ...formatRecordList(exportDiagnostics.filteredOutRecords),
-      "",
-      "CAPTURE PASSES"
-    ];
-    for (const pass of debugDiagnostics) {
-      lines.push(
-        "",
-        `#${pass.captureNumber} ${pass.captureReason} at ${pass.capturedAt}`,
-        `recording state: ${pass.recordingState}`,
-        `candidate root used: ${pass.candidateRootUsed}`,
-        `scrollTop=${pass.scrollTop} scrollHeight=${pass.scrollHeight} clientHeight=${pass.clientHeight}`,
-        `found content nodes count: ${pass.foundContentNodes}`,
-        `found container candidates count: ${pass.foundContainerCandidates}`,
-        `total candidates count: ${pass.totalCandidates}`,
-        `parsed messages count: ${pass.parsedMessages}`,
-        `saved new messages count: ${pass.savedNewMessages}`,
-        `merged existing messages count: ${pass.mergedExistingMessages}`,
-        `duplicate count: ${pass.duplicateCount}`,
-        `skipped invalid candidate count: ${pass.skippedInvalidCandidate}`,
-        `skipped empty body count: ${pass.skippedEmptyBody}`,
-        `skipped missing date count: ${pass.skippedMissingDate}`,
-        `skipped out of date range count: ${pass.skippedOutOfDateRange}`,
-        `skipped unknown speaker count: ${pass.skippedUnknownSpeaker}`,
-        `skipped export-filtered count: ${pass.skippedExportFiltered}`,
-        "first 10 discovered candidate IDs:", ...formatRecordList(pass.firstCandidateRecords || []),
-        "last 10 discovered candidate IDs:", ...formatRecordList(pass.lastCandidateRecords || []),
-        "first 10 parsed message IDs:", ...formatRecordList(firstLastFirst(pass.parsedRecords || [])),
-        "last 10 parsed message IDs:", ...formatRecordList(firstLastLast(pass.parsedRecords || [])),
-        "first 10 saved message IDs after the pass:", ...formatRecordList(firstLastFirst(pass.savedRecords || [])),
-        "last 10 saved message IDs after the pass:", ...formatRecordList(firstLastLast(pass.savedRecords || [])),
-        "first 10 exported message IDs:", ...formatRecordList(exportDiagnostics.firstExportedRecords),
-        "last 10 exported message IDs:", ...formatRecordList(exportDiagnostics.lastExportedRecords),
-        "skipped records:", ...formatRecordList(pass.skippedRecords || [])
-      );
-    }
-    return `${lines.join("\n")}\n`;
-  }
-
-  function formatRecordList(records) {
-    if (!records.length) return ["  (none)"];
-    return records.map((record) => `  id=${record.messageId || "unknown"} | key=${record.recordId || "unknown"} | speaker=${record.speaker || "UNKNOWN"} | isoDate=${record.isoDate || ""} | timestampSource=${record.timestampSource || "unknown"} | textLength=${record.textLength || 0} | preview="${String(record.textPreview || "").replace(/"/g, "'")}"${record.skipReason ? ` | skipReason=${record.skipReason}` : ""}${record.captureReason ? ` | captureReason=${record.captureReason}` : ""}`);
-  }
-
-  function debugFilename(filename) {
-    return filename.replace(/\.txt$/i, "-debug.txt") || "discord-chat-debug.txt";
   }
 
   function defaultFilename() {
