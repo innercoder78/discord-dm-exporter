@@ -1,98 +1,85 @@
 # Discord DM Log Exporter
 
-Discord DM Log Exporter is a Chrome extension for saving one-on-one Discord Web DMs as a clean `.txt` log file.
+Discord DM Log Exporter is a local-only Chrome extension for saving one-on-one Discord Web direct messages as a clean `.txt` file.
 
-It works locally in your browser while you manually scroll through a DM. It does not use Discord’s API, tokens, bots, or outside servers.
+It is designed for personal use in Chrome. It does not upload your messages anywhere.
 
-## What It Does
+## What it does
 
-* Records one-on-one Discord Web DMs while you scroll
-* Saves messages into a readable TXT log
-* Lets you choose the names shown in the exported log
-* Supports Date Range mode for cleaner start and end points
-* Supports EVERYTHING mode for recording all loaded messages
-* Avoids duplicate entries when scrolling back and forth
-* Leaves Discord reply previews and edited-message UI metadata out of exported logs
-* Ignores emoji reactions
-* Adds simple markers for files, images, and voice messages
-* Lets you show timestamps and choose their TXT export date/time format
-* Uses Chrome’s Save As window when exporting
+* Works on Discord Web in Chrome.
+* Exports one-on-one DMs to a `.txt` file.
+* Lets you choose the names that appear in the exported log.
+* Supports Date Range mode and EVERYTHING mode.
+* Lets you show timestamps and choose the timestamp format before export.
+* Avoids duplicate entries when you scroll back and forth.
+* Leaves out reactions, reply previews, edited-message labels, and Discord buttons or controls.
+* Adds simple markers for files, images, and voice messages.
+* Uses Chrome’s Save As window when exporting.
 
-## Important Notes
+## What it does not do
 
-This extension only works on Discord Web in Chrome.
+* It does not work with the Discord desktop app, mobile app, or tablet app.
+* It does not support servers, channels, group DMs, forums, threads, or voice channels.
+* It does not use Discord’s API.
+* It does not use a Discord token.
+* It does not create a bot or self-bot.
+* It does not auto-scroll.
+* It does not upload, send, sell, or share your messages.
 
-It does not work with:
+## Installation in Chrome
 
-* Discord desktop app
-* Discord mobile app
-* Server channels
-* Group chats
-* Threads
-* Forums
-* Voice channels
+1. Download or clone this repository.
+2. Open Chrome and go to `chrome://extensions`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the folder that contains `manifest.json`.
+6. Pin the extension if you want quick access from the toolbar.
 
-The extension does not auto-scroll. You choose where to start, click Start Recording, and scroll manually through the DM.
+## Basic use
 
-Discord only loads part of a conversation at a time, so the extension can only capture messages that are loaded while recording. It scans currently loaded messages when recording starts, scans loaded messages while you manually scroll, and runs a final loaded-message scan when recording ends. Capture uses Discord `message-content` nodes when available, derives fallback timestamps from Discord message IDs when visible timestamps or date dividers are unavailable. It still does not auto-scroll or use Discord’s API.
+1. Open Discord Web in Chrome.
+2. Open the one-on-one DM you want to export.
+3. Scroll to where the recording should begin.
+4. Open the extension popup.
+5. Set the names you want in the exported log.
+6. Enter both Discord display names for better speaker detection. Do not include server tags.
+7. Choose Date Range mode or EVERYTHING mode.
+8. Click **START**.
+9. In the Discord page overlay, click **Start Recording**.
+10. Scroll manually through the DM.
+11. Click **END RECORDING**.
+12. Click **Export TXT**.
+13. Choose the file name and folder in Chrome’s Save As window.
+14. Clear the captured data when finished.
 
-## Recording Modes
+## Recording modes
 
 ### Date Range
 
-Use Date Range mode when you want cleaner start and end boundaries.
+Date Range mode exports messages that fall within the selected local calendar dates.
 
-Messages outside the selected date range are not exported.
+Use this when you want a cleaner start and end point.
 
 ### EVERYTHING
 
-Use EVERYTHING mode when you want to record every loaded message the extension sees while recording.
+EVERYTHING mode records every loaded message the extension sees while recording.
 
-This mode may include a few extra nearby messages, so you may need to trim the TXT file afterward.
+Use this when you want everything you manually scroll through. You may need to trim a few extra lines from the TXT file afterward.
 
-## Timestamp Export Options
+## Important note about scrolling
 
-The main extension popup includes a `Show timestamps` checkbox.
+Discord only loads part of a conversation at a time.
 
-If `Show timestamps` is enabled for a recording, the Recording Ended overlay lets you choose timestamp formatting before clicking Export TXT.
+The extension can only capture messages that Discord has loaded into the page. It scans loaded messages when recording starts, while you scroll, when recording ends, and again before export.
 
-Date Format options:
-
-* `MM/DD/YYYY`
-* `DD/MM/YYYY`
-* `YYYY/MM/DD`
-
-Time Format options:
-
-* `12 HOURS (AM/PM)`
-* `24 HOURS (00:00 to 23:59)`
-
-These options affect only how timestamps appear in the exported `.txt` log. They do not change message capture, ordering, deduplication, or filtering.
-
-Date Range filtering still uses the browser date picker. The date picker may display according to your browser or system locale, and the export timestamp format does not change Date Range behavior.
-
-## Basic Workflow
-
-1. Open Discord Web in Chrome.
-2. Open the DM you want to log.
-3. Scroll to where you want recording to begin.
-4. Open the extension.
-5. Enter the names/display names.
-6. Choose Date Range or EVERYTHING mode.
-7. Click START.
-8. Click Start Recording on the Discord page.
-9. Scroll manually through the DM.
-10. Click END RECORDING.
-11. If `Show timestamps` was enabled, choose Date Format and Time Format.
-12. Click Export TXT.
-13. Choose where to save the file.
+It does not auto-scroll. You control the scrolling.
 
 ## Privacy
 
-Everything stays local in your browser.
+This extension works locally in your browser.
 
-The extension does not upload your messages or send them anywhere.
+Captured messages are stored in Chrome’s local extension storage until you export or clear them. The extension does not send your messages to any server.
 
-## DISCLAIMER
+## License
 
-Discord frowns upon such tools. Therefore, if you get your account banned because of it, you assume all risk and liability by using this extension.
+MIT. See [LICENSE](LICENSE).
