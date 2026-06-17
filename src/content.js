@@ -372,7 +372,7 @@
     } else if (recordingState === "stopped") {
       updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p>${timestampFormatControls()}<button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
     } else {
-      const disabled = hasRequiredDates() ? "" : "disabled";
+      const disabled = hasRequiredDates() && !isReversedDateRange() ? "" : "disabled";
       updateOverlayBody(body, `<h2>Confirm starting position</h2><p>After you click Start Recording, scroll manually through the DM. Messages are captured as Discord loads them.</p><p>For the cleanest log, start where you want the log to begin and scroll down until you reach the point where you want it to end.</p><p>${modeConfirmationText()}</p>${everythingNote}${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
     }
   }
