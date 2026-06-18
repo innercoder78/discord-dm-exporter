@@ -18,7 +18,7 @@
   const overlayId = "discord-dm-log-exporter-overlay";
   const unsupportedText = "This extension is designed only for one-on-one Discord DMs.\n\nServer channels, group chats, threads, forums, and voice channels are not supported.";
   const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
-  const unknownWarningText = "Some loaded messages cannot be confidently mapped to either configured Discord name. UNKNOWN messages are retained for review and may need warning/resolution before export.";
+  const unknownWarningText = "Some loaded messages cannot be confidently mapped to either configured Discord name. UNKNOWN messages are retained for review and may need resolution before export.";
   let settings = DEFAULT_SETTINGS;
   let messages = [];
   let recordingState = "idle";
@@ -31,7 +31,7 @@
   let lastSpeakerNode = null;
   let lastIsoDate = "";
   let unknownWarningAccepted = false;
-  let unknownSkipped = 0;
+  let unknownRetainedCount = 0;
   let overlayVisible = false;
   let messageObserver = extensionState.messageObserver || null;
   let observedMessageContainer = extensionState.observedMessageContainer || null;
@@ -367,7 +367,7 @@
     const everythingNote = settings.everythingMode ? `<p class="warn">EVERYTHING mode records every loaded message it sees while recording. If you need exact start and end boundaries, use Date Range. Otherwise, you may need to manually trim a few extra lines from the TXT file afterward.</p>` : "";
 
     if (recordingState === "recording") {
-      const unknownWarning = unknownSkipped ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
+      const unknownWarning = unknownRetainedCount && !unknownWarningAccepted ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
       updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
     } else if (recordingState === "stopped") {
       updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p>${timestampFormatControls()}<button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
@@ -412,7 +412,7 @@
       lastSpeakerNode = null;
       lastIsoDate = "";
       unknownWarningAccepted = false;
-      unknownSkipped = 0;
+      unknownRetainedCount = 0;
       recordingState = "recording";
       await chrome.storage.local.set({ messages, captureCounter, recordingState: "recording" });
       startMessageObserver();
@@ -451,7 +451,7 @@
     lastSpeakerNode = null;
     lastIsoDate = "";
     unknownWarningAccepted = false;
-    unknownSkipped = 0;
+    unknownRetainedCount = 0;
     const updates = { captureCounter: 0, recordingState: "idle" };
     if (clearMessages) updates.messages = [];
     await chrome.storage.local.set(updates);
@@ -488,10 +488,10 @@
       if (!settings.everythingMode && !isInsideRange(parsed.isoDate)) {
         return;
       }
-      if (!settings.everythingMode && parsed.speaker === "UNKNOWN" && !settings.allowUnknownDateRange && !unknownWarningAccepted) {
+      if (parsed.speaker === "UNKNOWN" && !unknownWarningAccepted) {
         if (!skippedUnknownKeys.has(key)) {
           skippedUnknownKeys.add(key);
-          unknownSkipped += 1;
+          unknownRetainedCount += 1;
         }
       }
       const existingIndex = messages.findIndex((message) => messageKey(message, suspiciousStableIds) === key);
@@ -666,15 +666,63 @@
 
   function inferContinuedSpeaker(node) {
     if (!node || !lastSpeakerNode || lastSpeaker === "UNKNOWN") return "UNKNOWN";
-    const previous = previousElementIgnoringEmptyText(node);
-    if (previous !== lastSpeakerNode) return "UNKNOWN";
-    if (isLikelyBoundaryElement(previous) || isLikelyBoundaryElement(node)) return "UNKNOWN";
     if (getAuthor(node)) return "UNKNOWN";
-    return lastSpeaker;
+    if (isLikelyBoundaryElement(node) || isLikelyBoundaryElement(lastSpeakerNode)) return "UNKNOWN";
+    if (isSameMessageGroup(node, lastSpeakerNode)) return lastSpeaker;
+    if (isAdjacentMessageRun(lastSpeakerNode, node)) return lastSpeaker;
+    if (hasBoundaryBetween(lastSpeakerNode, node)) return "UNKNOWN";
+    if (hasVisibleAuthorBetween(lastSpeakerNode, node)) return "UNKNOWN";
+    if (shareImmediateListParent(lastSpeakerNode, node)) return lastSpeaker;
+    return "UNKNOWN";
   }
 
-  function previousElementIgnoringEmptyText(node) {
-    return node?.previousElementSibling || null;
+  function isSameMessageGroup(a, b) {
+    const groupA = closestMessageGroup(a);
+    const groupB = closestMessageGroup(b);
+    return Boolean(groupA && groupA === groupB);
+  }
+
+  function closestMessageGroup(node) {
+    return node?.closest?.('[class*="messageListItem"], li[id^="chat-messages-"], li[data-list-item-id*="chat-messages"], [role="article"][id^="chat-messages-"], [role="article"][data-list-item-id]') || null;
+  }
+
+  function isAdjacentMessageRun(previousNode, node) {
+    if (!previousNode || !node) return false;
+    const previous = previousNode.nextElementSibling;
+    if (previous === node) return !isLikelyBoundaryElement(previousNode) && !isLikelyBoundaryElement(node);
+    return false;
+  }
+
+  function shareImmediateListParent(a, b) {
+    if (!a || !b || a.parentElement !== b.parentElement) return false;
+    const parent = a.parentElement;
+    if (!parent?.matches?.('ol, ul, [role="list"], [role="log"], [data-list-id="chat-messages"], [class*="scroller"]')) return false;
+    return !hasBoundaryBetween(a, b) && !hasVisibleAuthorBetween(a, b);
+  }
+
+  function hasBoundaryBetween(a, b) {
+    return elementsBetween(a, b).some(isLikelyBoundaryElement);
+  }
+
+  function hasVisibleAuthorBetween(a, b) {
+    return elementsBetween(a, b).some((element) => {
+      if (element === a || element === b) return false;
+      const candidate = normalizeMessageCandidate(element);
+      return candidate && candidate !== a && candidate !== b && Boolean(getAuthor(candidate));
+    });
+  }
+
+  function elementsBetween(a, b) {
+    if (!a || !b) return [];
+    const parent = a.parentElement;
+    if (!parent || parent !== b.parentElement) return [];
+    const elements = [];
+    let current = a.nextElementSibling;
+    while (current && current !== b) {
+      elements.push(current);
+      current = current.nextElementSibling;
+    }
+    return current === b ? elements : [];
   }
 
   function isLikelyBoundaryElement(node) {
