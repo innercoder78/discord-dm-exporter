@@ -50,6 +50,7 @@
   const maxDebugCandidates = 1000;
   const minCaptureIntervalMs = 750;
 
+  extensionState.showRecordingOverlayFromPopup = showRecordingOverlayFromPopup;
   registerRuntimeMessageListener();
   init();
 
@@ -77,25 +78,25 @@
   function handleRuntimeMessage(message, sender, sendResponse) {
     if (message?.type === "SHOW_RECORDING_OVERLAY") {
       try {
-        overlayVisible = true;
-        if (typeof message.developerMode === "boolean") settings = { ...settings, developerMode: message.developerMode };
-        const status = dmStatus();
-        renderOverlay();
-        if (!status.ok) {
-          sendResponse({ ok: false, error: dmErrorText(status.reason) });
-          return true;
-        }
-        if (!document.getElementById(overlayId)) {
-          sendResponse({ ok: false, error: "The recording overlay could not be added to the Discord page." });
-          return true;
-        }
-        sendResponse({ ok: true });
+        sendResponse(showRecordingOverlayFromPopup({ developerMode: message.developerMode }));
       } catch (error) {
         sendResponse({ ok: false, error: error?.message || String(error) });
       }
       return true;
     }
     return false;
+  }
+
+  function showRecordingOverlayFromPopup(options = {}) {
+    overlayVisible = true;
+    if (typeof options.developerMode === "boolean") settings = { ...settings, developerMode: options.developerMode };
+    const status = dmStatus();
+    renderOverlay();
+    if (!status.ok) return { ok: false, error: dmErrorText(status.reason) };
+    if (!document.getElementById(overlayId)) {
+      return { ok: false, error: "The recording overlay could not be added to the Discord page." };
+    }
+    return { ok: true };
   }
 
   function registerStorageChangeListener() {
