@@ -476,14 +476,16 @@
   }
 
   function buildContinuationDiagnostics(node) {
+    const continuationNode = getContinuationNode(node);
+    const previousContinuationNode = getContinuationNode(lastSpeakerNode);
     const previousSpeakerExisted = Boolean(lastSpeaker && lastSpeaker !== "UNKNOWN");
-    const previousSpeakerNodeExists = Boolean(lastSpeakerNode && document.contains(lastSpeakerNode));
+    const previousSpeakerNodeExists = Boolean(previousContinuationNode && document.contains(previousContinuationNode));
     const hasVisibleAuthor = Boolean(getAuthor(node));
-    const sameGroup = Boolean(lastSpeakerNode && isSameMessageGroup(node, lastSpeakerNode));
-    const directNearAdjacency = Boolean(lastSpeakerNode && isAdjacentMessageRun(lastSpeakerNode, node));
-    const sharedParent = Boolean(lastSpeakerNode && node?.parentElement && node.parentElement === lastSpeakerNode.parentElement);
-    const boundaryDetected = Boolean(isLikelyBoundaryElement(node) || isLikelyBoundaryElement(lastSpeakerNode) || (lastSpeakerNode && hasBoundaryBetween(lastSpeakerNode, node)));
-    const visibleAuthorChange = Boolean(lastSpeakerNode && hasVisibleAuthorBetween(lastSpeakerNode, node));
+    const sameGroup = Boolean(previousContinuationNode && isSameMessageGroup(continuationNode, previousContinuationNode));
+    const directNearAdjacency = Boolean(previousContinuationNode && isAdjacentMessageRun(previousContinuationNode, continuationNode));
+    const sharedParent = Boolean(previousContinuationNode && continuationNode?.parentElement && continuationNode.parentElement === previousContinuationNode.parentElement);
+    const boundaryDetected = Boolean(isLikelyBoundaryElement(continuationNode) || isLikelyBoundaryElement(previousContinuationNode) || (previousContinuationNode && hasBoundaryBetween(previousContinuationNode, continuationNode)));
+    const visibleAuthorChange = Boolean(previousContinuationNode && hasVisibleAuthorBetween(previousContinuationNode, continuationNode));
     let reasonCode = "no-previous-speaker";
     if (!node) reasonCode = "missing-node";
     else if (!previousSpeakerNodeExists) reasonCode = "missing-previous-node";
@@ -499,6 +501,9 @@
       previousSpeakerExisted,
       previousSpeakerLabel: safeSpeakerLabel(lastSpeaker),
       previousSpeakerNodeExists,
+      continuationNodeTagName: String(continuationNode?.tagName || "unknown").toLowerCase(),
+      previousContinuationNodeTagName: String(previousContinuationNode?.tagName || "unknown").toLowerCase(),
+      hasOuterMessageContainer: Boolean(continuationNode && continuationNode !== node),
       sameGroup,
       directNearAdjacency,
       sharedParent,
@@ -843,31 +848,60 @@
   }
 
   function inferContinuedSpeaker(node) {
-    if (!node || !lastSpeakerNode || lastSpeaker === "UNKNOWN") return "UNKNOWN";
+    const continuationNode = getContinuationNode(node);
+    const previousContinuationNode = getContinuationNode(lastSpeakerNode);
+    if (!continuationNode || !previousContinuationNode || lastSpeaker === "UNKNOWN") return "UNKNOWN";
     if (getAuthor(node)) return "UNKNOWN";
-    if (isLikelyBoundaryElement(node) || isLikelyBoundaryElement(lastSpeakerNode)) return "UNKNOWN";
-    if (isSameMessageGroup(node, lastSpeakerNode)) return lastSpeaker;
-    if (isAdjacentMessageRun(lastSpeakerNode, node)) return lastSpeaker;
-    if (hasBoundaryBetween(lastSpeakerNode, node)) return "UNKNOWN";
-    if (hasVisibleAuthorBetween(lastSpeakerNode, node)) return "UNKNOWN";
-    if (shareImmediateListParent(lastSpeakerNode, node)) return lastSpeaker;
+    if (isLikelyBoundaryElement(continuationNode) || isLikelyBoundaryElement(previousContinuationNode)) return "UNKNOWN";
+    if (hasBoundaryBetween(previousContinuationNode, continuationNode)) return "UNKNOWN";
+    if (hasVisibleAuthorBetween(previousContinuationNode, continuationNode)) return "UNKNOWN";
+    if (isSameMessageGroup(continuationNode, previousContinuationNode)) return lastSpeaker;
+    if (isAdjacentMessageRun(previousContinuationNode, continuationNode)) return lastSpeaker;
+    if (shareImmediateListParent(previousContinuationNode, continuationNode)) return lastSpeaker;
     return "UNKNOWN";
   }
 
   function isSameMessageGroup(a, b) {
-    const groupA = closestMessageGroup(a);
-    const groupB = closestMessageGroup(b);
+    const groupA = closestMessageGroup(getContinuationNode(a));
+    const groupB = closestMessageGroup(getContinuationNode(b));
     return Boolean(groupA && groupA === groupB);
   }
 
   function closestMessageGroup(node) {
-    return node?.closest?.('[class*="messageListItem"], li[id^="chat-messages-"], li[data-list-item-id*="chat-messages"], [role="article"][id^="chat-messages-"], [role="article"][data-list-item-id]') || null;
+    return getContinuationNode(node);
+  }
+
+  function getContinuationNode(node) {
+    if (!node || isInsideOverlay(node)) return null;
+    const normalized = normalizeMessageCandidate(node);
+    const start = normalized || node;
+    const stableSelector = '[id^="chat-messages-"], [data-list-item-id*="chat-messages"]';
+    const fallbackSelector = 'li, [role="article"], [class*="messageListItem"]';
+    let fallback = null;
+    let current = start;
+    while (current && current !== document.body && !isInsideOverlay(current)) {
+      if (current.matches?.('[data-list-id="chat-messages"], [role="log"], main, ol, ul') && !current.matches?.('li, [role="article"], [class*="messageListItem"]')) break;
+      if (current.matches?.(stableSelector)) return current;
+      if (!fallback && current.matches?.(fallbackSelector)) fallback = current;
+      current = current.parentElement;
+    }
+    return fallback || start;
   }
 
   function isAdjacentMessageRun(previousNode, node) {
-    if (!previousNode || !node) return false;
-    const previous = previousNode.nextElementSibling;
-    if (previous === node) return !isLikelyBoundaryElement(previousNode) && !isLikelyBoundaryElement(node);
+    const previousContinuationNode = getContinuationNode(previousNode);
+    const continuationNode = getContinuationNode(node);
+    if (!previousContinuationNode || !continuationNode || previousContinuationNode === continuationNode) return false;
+    if (previousContinuationNode.parentElement !== continuationNode.parentElement) return false;
+    let current = previousContinuationNode.nextElementSibling;
+    let inspected = 0;
+    while (current && inspected < 4) {
+      if (current === continuationNode) return !isLikelyBoundaryElement(previousContinuationNode) && !isLikelyBoundaryElement(continuationNode);
+      if (isLikelyBoundaryElement(current)) return false;
+      if (normalizeMessageCandidate(current) && getAuthor(normalizeMessageCandidate(current))) return false;
+      current = current.nextElementSibling;
+      inspected += 1;
+    }
     return false;
   }
 
@@ -939,6 +973,7 @@
     const ownedContentNodes = getOwnedContentNodes(node);
     const ownedMediaNodes = getOwnedMediaNodes(node);
     const ownedVoiceNodes = getOwnedVoiceNodes(node);
+    const continuationNode = getContinuationNode(node);
     const authorText = getAuthor(node);
     const authorSpeaker = authorText ? speakerFor(authorText) : "UNKNOWN";
     const continuationDiagnostics = buildContinuationDiagnostics(node);
@@ -950,6 +985,8 @@
     const debug = settings.developerMode ? {
       candidateIndex: domIndex,
       normalizedCandidateTagName: String(node.tagName || "unknown").toLowerCase(),
+      continuationNodeTagName: String(continuationNode?.tagName || "unknown").toLowerCase(),
+      hasOuterMessageContainer: Boolean(continuationNode && continuationNode !== node),
       stableIdPresent: Boolean(id),
       hasMessageSpecificEvidence: hasMessageSpecificEvidence(node),
       hasOwnedTimestamp: Boolean(ownedTimestamp),
@@ -973,7 +1010,7 @@
     }
     if (speaker && speaker !== "UNKNOWN") {
       lastSpeaker = speaker;
-      lastSpeakerNode = node;
+      lastSpeakerNode = continuationNode || node;
     } else {
       lastSpeaker = "UNKNOWN";
       lastSpeakerNode = null;
