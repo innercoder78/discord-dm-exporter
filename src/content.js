@@ -1,4 +1,6 @@
 (() => {
+  if (window.__discordDmLogExporterLoaded) return;
+  window.__discordDmLogExporterLoaded = true;
   const extensionState = window.__discordDmLogExporter || {};
   window.__discordDmLogExporter = extensionState;
 

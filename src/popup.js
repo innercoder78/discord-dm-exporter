@@ -1,3 +1,5 @@
+const SHOW_DEVELOPER_MODE_UI = false;
+
 const DEFAULT_SETTINGS = {
   selfLabel: "ME",
   otherLabel: "FRIEND",
@@ -42,7 +44,11 @@ init().catch((error) => showPopupError("Could not initialize popup", error));
 
 async function init() {
   const { settings = DEFAULT_SETTINGS } = await chrome.storage.local.get("settings");
-  populate(normalizeSettings(settings));
+  const normalizedSettings = normalizeSettings(settings);
+  if (!SHOW_DEVELOPER_MODE_UI && settings?.developerMode) {
+    await chrome.storage.local.set({ settings: normalizedSettings });
+  }
+  populate(normalizedSettings);
   updateValidation();
   await showTabWarningIfNeeded();
 }
@@ -60,15 +66,25 @@ function normalizeSettings(value) {
     includeTimestamps: Boolean(value?.includeTimestamps),
     ignoreReactions: true,
     allowUnknownDateRange: Boolean(value?.allowUnknownDateRange),
-    developerMode: Boolean(value?.developerMode)
+    developerMode: SHOW_DEVELOPER_MODE_UI ? Boolean(value?.developerMode) : false
   };
 }
 
 function populate(settings) {
+  configureDeveloperModeUi();
   for (const [key, input] of Object.entries(fields)) {
+    if (!input) continue;
     if (input.type === "checkbox") input.checked = Boolean(settings[key]);
     else input.value = settings[key] || "";
   }
+}
+
+function configureDeveloperModeUi() {
+  const developerModeControl = fields.developerMode?.closest("label");
+  const developerModeNote = document.querySelector("#developer-mode-note");
+  if (developerModeControl) developerModeControl.hidden = !SHOW_DEVELOPER_MODE_UI;
+  if (developerModeNote) developerModeNote.hidden = !SHOW_DEVELOPER_MODE_UI;
+  if (!SHOW_DEVELOPER_MODE_UI && fields.developerMode) fields.developerMode.checked = false;
 }
 
 function readSettings() {
@@ -83,7 +99,7 @@ function readSettings() {
     includeTimestamps: fields.includeTimestamps.checked,
     ignoreReactions: true,
     allowUnknownDateRange: false,
-    developerMode: fields.developerMode.checked
+    developerMode: SHOW_DEVELOPER_MODE_UI && Boolean(fields.developerMode?.checked)
   };
 }
 
@@ -111,9 +127,8 @@ form.addEventListener("submit", async (event) => {
     await chrome.storage.local.set({ settings });
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const isDiscordWeb = tab?.url?.startsWith("https://discord.com/");
-    if (!isDiscordWeb || !tab.id) {
-      statusEl.textContent = openDiscordManuallyText;
+    if (!tab?.id || !isSupportedDiscordDmUrl(tab.url)) {
+      statusEl.textContent = unsupportedActiveTabText(tab?.url);
       await showTabWarningIfNeeded();
       return;
     }
@@ -135,6 +150,9 @@ form.addEventListener("submit", async (event) => {
 async function showOverlayOnTab(tabId) {
   const firstResponse = await sendStartMessage(tabId);
   if (firstResponse.ok) return firstResponse.response;
+  if (!isConnectionMissingError(firstResponse.error)) {
+    throw new Error(firstResponse.error || "The Discord page script did not respond.");
+  }
 
   await chrome.scripting.executeScript({
     target: { tabId },
@@ -144,7 +162,7 @@ async function showOverlayOnTab(tabId) {
 
   const secondResponse = await sendStartMessage(tabId);
   if (secondResponse.ok) return secondResponse.response;
-  throw new Error(secondResponse.error || firstResponse.error || "The Discord page script did not respond.");
+  throw new Error(secondResponse.error || firstResponse.error || "The Discord page script did not respond after retrying.");
 }
 
 function sendStartMessage(tabId) {
@@ -197,8 +215,25 @@ function updateValidation() {
 
 async function showTabWarningIfNeeded() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const isDiscordWeb = tab?.url?.startsWith("https://discord.com/");
-  warningEl.classList.toggle("hidden", Boolean(isDiscordWeb));
+  warningEl.classList.toggle("hidden", isSupportedDiscordDmUrl(tab?.url));
+}
+
+function isSupportedDiscordDmUrl(url) {
+  try {
+    const parsed = new URL(url || "");
+    return parsed.origin === "https://discord.com" && /^\/channels\/@me\/[^/]+\/?$/.test(parsed.pathname);
+  } catch (error) {
+    return false;
+  }
+}
+
+function unsupportedActiveTabText(url) {
+  if (!String(url || "").startsWith("https://discord.com/")) return openDiscordManuallyText;
+  return "Open a one-on-one Discord DM before starting. Server channels, group chats, threads, forums, and voice channels are not supported.";
+}
+
+function isConnectionMissingError(message) {
+  return /receiving end does not exist|could not establish connection/i.test(String(message || ""));
 }
 
 
