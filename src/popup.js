@@ -148,7 +148,6 @@ form.addEventListener("submit", async (event) => {
 });
 
 async function showOverlayOnTab(tabId) {
-  const { developerMode } = readSettings();
   const firstResponse = await sendStartMessage(tabId);
   if (firstResponse.ok) return firstResponse.response;
   if (!isConnectionMissingError(firstResponse.error)) {
@@ -161,9 +160,21 @@ async function showOverlayOnTab(tabId) {
   });
   checkLastError("injecting the Discord page script");
 
-  const fallbackResponse = await showOverlayByDirectCommand(tabId, developerMode);
-  if (fallbackResponse?.ok) return fallbackResponse;
-  throw new Error(fallbackResponse?.error || "The Discord page script did not respond after direct fallback.");
+  await waitForContentScriptListener();
+  const retryResponse = await sendStartMessage(tabId);
+  if (retryResponse.ok) return retryResponse.response;
+  if (!isConnectionMissingError(retryResponse.error)) {
+    throw new Error(retryResponse.error || "The Discord page script did not respond after injection.");
+  }
+
+  await waitForContentScriptListener();
+  const finalResponse = await sendStartMessage(tabId);
+  if (finalResponse.ok) return finalResponse.response;
+  if (!isConnectionMissingError(finalResponse.error)) {
+    throw new Error(finalResponse.error || "The Discord page script did not respond after injection.");
+  }
+
+  throw new Error(reloadTabGuidance(finalResponse.error));
 }
 
 function sendStartMessage(tabId) {
@@ -192,20 +203,13 @@ function checkLastError(action) {
   if (lastError) throw new Error(`Error while ${action}: ${lastError.message}`);
 }
 
-async function showOverlayByDirectCommand(tabId, developerMode) {
-  const [injectionResult] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: (options) => {
-      const command = window.__discordDmLogExporter?.showRecordingOverlayFromPopup;
-      if (typeof command !== "function") {
-        return { ok: false, error: "The Discord page script was injected but did not expose the overlay command." };
-      }
-      return command({ developerMode: Boolean(options?.developerMode) });
-    },
-    args: [{ developerMode }]
-  });
-  checkLastError("opening the recording overlay directly");
-  return injectionResult?.result || { ok: false, error: "The Discord page script returned no direct fallback response." };
+function waitForContentScriptListener() {
+  return new Promise((resolve) => window.setTimeout(resolve, 100));
+}
+
+function reloadTabGuidance(error) {
+  const detail = error ? ` Underlying error: ${error}` : "";
+  return `The Discord page script was injected, but it still did not respond. Reload the Discord tab and try again.${detail}`;
 }
 
 function showPopupError(prefix, error) {
