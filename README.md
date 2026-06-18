@@ -10,8 +10,12 @@ It is designed for personal use in Chrome. It does not upload your messages anyw
 * Exports one-on-one DMs to a `.txt` file.
 * Lets you choose the names that appear in the exported log.
 * Supports Date Range mode and EVERYTHING mode.
-* Lets you show timestamps and choose the timestamp format before export.
+* Allows same-day Date Range exports.
+* Uses local calendar dates for Date Range mode.
+* Lets you include timestamps and choose the timestamp format before export.
+* Uses your browser’s local time for exported timestamps.
 * Avoids duplicate entries when you scroll back and forth.
+* Helps keep messages, files, images, embeds, stickers, and voice-message markers tied to the right message.
 * Leaves out reactions, reply previews, edited-message labels, and Discord buttons or controls.
 * Adds simple markers for files, images, and voice messages.
 * Uses Chrome’s Save As window when exporting.
@@ -58,7 +62,7 @@ It is designed for personal use in Chrome. It does not upload your messages anyw
 
 Date Range mode exports messages that fall within the selected local calendar dates.
 
-Use this when you want a cleaner start and end point.
+Use this when you want a cleaner start and end point. The Start date and End date can be the same day.
 
 ### EVERYTHING
 
