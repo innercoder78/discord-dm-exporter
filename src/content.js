@@ -1,6 +1,4 @@
 (() => {
-  if (window.__discordDmLogExporterLoaded) return;
-  window.__discordDmLogExporterLoaded = true;
   const extensionState = window.__discordDmLogExporter || {};
   window.__discordDmLogExporter = extensionState;
 
@@ -52,6 +50,7 @@
   const maxDebugCandidates = 1000;
   const minCaptureIntervalMs = 750;
 
+  registerRuntimeMessageListener();
   init();
 
   async function init() {
@@ -62,7 +61,6 @@
     captureCounter = Number(stored.captureCounter || messages.length || 0);
     seenKeys = new Set(messages.map((message) => messageKey(message)));
     overlayVisible = recordingState === "recording" || recordingState === "stopped";
-    registerRuntimeMessageListener();
     registerStorageChangeListener();
     renderOverlay();
     if (recordingState === "recording") startMessageObserver();
@@ -185,18 +183,21 @@
     if (!target) return;
     scrollCaptureTarget = target;
     extensionState.scrollCaptureTarget = target;
+    extensionState.scrollCaptureListener = handleManualScroll;
     target.addEventListener("scroll", handleManualScroll, { passive: true });
     startScrollPolling(target);
   }
 
   function stopScrollCaptureListener() {
-    if (scrollCaptureTarget) scrollCaptureTarget.removeEventListener("scroll", handleManualScroll);
+    const previousScrollListener = extensionState.scrollCaptureListener || handleManualScroll;
+    if (scrollCaptureTarget) scrollCaptureTarget.removeEventListener("scroll", previousScrollListener);
     stopScrollPolling();
     if (scrollCaptureTimeoutId) window.clearTimeout(scrollCaptureTimeoutId);
     scrollCaptureTarget = null;
     scrollCaptureTimeoutId = 0;
     extensionState.scrollCaptureTarget = null;
     extensionState.scrollCaptureTimeoutId = 0;
+    extensionState.scrollCaptureListener = null;
   }
 
   function startScrollPolling(target) {
