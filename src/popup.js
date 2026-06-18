@@ -8,7 +8,8 @@ const DEFAULT_SETTINGS = {
   everythingMode: false,
   includeTimestamps: false,
   ignoreReactions: true,
-  allowUnknownDateRange: false
+  allowUnknownDateRange: false,
+  developerMode: false
 };
 
 const missingDatesText = "Date Range mode requires both a start date and an end date.\n\nChoose both dates, or check EVERYTHING.";
@@ -27,7 +28,8 @@ const fields = {
   startDate: document.querySelector("#start-date"),
   endDate: document.querySelector("#end-date"),
   everythingMode: document.querySelector("#everything-mode"),
-  includeTimestamps: document.querySelector("#include-timestamps")
+  includeTimestamps: document.querySelector("#include-timestamps"),
+  developerMode: document.querySelector("#developer-mode")
 };
 const statusEl = document.querySelector("#status");
 const instructionsEl = document.querySelector("#mode-instructions");
@@ -57,7 +59,8 @@ function normalizeSettings(value) {
     everythingMode: Boolean(value?.everythingMode),
     includeTimestamps: Boolean(value?.includeTimestamps),
     ignoreReactions: true,
-    allowUnknownDateRange: Boolean(value?.allowUnknownDateRange)
+    allowUnknownDateRange: Boolean(value?.allowUnknownDateRange),
+    developerMode: Boolean(value?.developerMode)
   };
 }
 
@@ -79,7 +82,8 @@ function readSettings() {
     everythingMode: fields.everythingMode.checked,
     includeTimestamps: fields.includeTimestamps.checked,
     ignoreReactions: true,
-    allowUnknownDateRange: false
+    allowUnknownDateRange: false,
+    developerMode: fields.developerMode.checked
   };
 }
 
@@ -145,7 +149,7 @@ async function showOverlayOnTab(tabId) {
 
 function sendStartMessage(tabId) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { type: "SHOW_RECORDING_OVERLAY" }, (response) => {
+    chrome.tabs.sendMessage(tabId, { type: "SHOW_RECORDING_OVERLAY", developerMode: readSettings().developerMode }, (response) => {
       const lastError = chrome.runtime.lastError;
       if (lastError) {
         resolve({ ok: false, error: lastError.message });

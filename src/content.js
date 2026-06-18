@@ -12,7 +12,8 @@
     everythingMode: false,
     includeTimestamps: false,
     ignoreReactions: true,
-    allowUnknownDateRange: false
+    allowUnknownDateRange: false,
+    developerMode: false
   };
   const STORE_KEYS = ["settings", "messages", "recordingState", "captureCounter"];
   const overlayId = "discord-dm-log-exporter-overlay";
@@ -44,6 +45,7 @@
   let lastCaptureStartedAt = extensionState.lastCaptureStartedAt || 0;
   let lastOverlaySignature = extensionState.lastOverlaySignature || "";
   let exportFilename = defaultFilename();
+  let debugLog = createDebugLog();
   const minCaptureIntervalMs = 750;
 
   init();
@@ -74,6 +76,7 @@
     if (message?.type === "SHOW_RECORDING_OVERLAY") {
       try {
         overlayVisible = true;
+        if (typeof message.developerMode === "boolean") settings = { ...settings, developerMode: message.developerMode };
         const status = dmStatus();
         renderOverlay();
         if (!status.ok) {
@@ -133,7 +136,8 @@
       everythingMode: Boolean(value?.everythingMode),
       includeTimestamps: Boolean(value?.includeTimestamps),
       ignoreReactions: true,
-      allowUnknownDateRange: Boolean(value?.allowUnknownDateRange)
+      allowUnknownDateRange: Boolean(value?.allowUnknownDateRange),
+      developerMode: Boolean(value?.developerMode)
     };
   }
 
@@ -344,7 +348,7 @@
       overlay.id = overlayId;
       overlay.innerHTML = `<style>
         #${overlayId}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:340px;background:#1f2330;color:#fff;border:1px solid #5865f2;border-radius:12px;box-shadow:0 10px 30px #0008;font:14px/1.4 Arial,sans-serif;padding:14px}
-        #${overlayId} h2{font-size:16px;margin:0 0 8px} #${overlayId} p{margin:7px 0;white-space:pre-line} #${overlayId} button{border:0;border-radius:7px;padding:8px 10px;margin:6px 6px 0 0;background:#5865f2;color:#fff;font-weight:700;cursor:pointer} #${overlayId} button.secondary{background:#4b5563} #${overlayId} button.danger{background:#b91c1c} #${overlayId} .warn{background:#3b2a16;border:1px solid #fdba74;border-radius:8px;padding:8px} #${overlayId} label{display:block;font-weight:700;margin-top:8px} #${overlayId} select{box-sizing:border-box;width:100%;margin-top:4px;padding:7px;border-radius:6px;border:1px solid #6b7280;background:#111827;color:#fff}
+        #${overlayId} h2{font-size:16px;margin:0 0 8px} #${overlayId} h3{font-size:14px;margin:12px 0 4px} #${overlayId} p{margin:7px 0;white-space:pre-line} #${overlayId} button{border:0;border-radius:7px;padding:8px 10px;margin:6px 6px 0 0;background:#5865f2;color:#fff;font-weight:700;cursor:pointer} #${overlayId} button.secondary{background:#4b5563} #${overlayId} button.danger{background:#b91c1c} #${overlayId} .warn{background:#3b2a16;border:1px solid #fdba74;border-radius:8px;padding:8px} #${overlayId} label{display:block;font-weight:700;margin-top:8px} #${overlayId} .debug{border-top:1px solid #4b5563;margin-top:10px;padding-top:8px} #${overlayId} select{box-sizing:border-box;width:100%;margin-top:4px;padding:7px;border-radius:6px;border:1px solid #6b7280;background:#111827;color:#fff}
       </style><div data-body></div>`;
       document.body.appendChild(overlay);
       lastOverlaySignature = "";
@@ -365,16 +369,169 @@
     const displayNameWarning = (!settings.selfDisplayName || !settings.otherDisplayName) ? `<p class="warn">For best results, enter both Discord display names without server tags. If these are blank, speaker detection may be less accurate.</p>` : "";
     const dateWarning = !hasRequiredDates() ? `<p class="warn">${missingDatesText}</p>` : isReversedDateRange() ? `<p class="warn">Start date must be on or before end date.</p>` : "";
     const everythingNote = settings.everythingMode ? `<p class="warn">EVERYTHING mode records every loaded message it sees while recording. If you need exact start and end boundaries, use Date Range. Otherwise, you may need to manually trim a few extra lines from the TXT file afterward.</p>` : "";
+    const developerTools = developerModeTools();
+    updateDebugWarningState();
 
     if (recordingState === "recording") {
       const unknownWarning = unknownRetainedCount && !unknownWarningAccepted ? `<p class="warn">${unknownWarningText}</p><button data-action="accept-unknown">Continue with UNKNOWN messages</button>` : "";
-      updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>`);
+      updateOverlayBody(body, `<h2>Recording…</h2><p>Scroll down manually through the conversation. Messages are captured as Discord loads them.</p><p>Total messages seen: ${totalSeen}</p><p>Messages saved/exportable: ${messages.length}</p><p>Current mode: ${mode}</p>${unknownWarning}<button class="danger" data-action="stop">END RECORDING</button>${developerTools}`);
     } else if (recordingState === "stopped") {
-      updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p>${timestampFormatControls()}<button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>`);
+      updateOverlayBody(body, `<h2>Recording ended.</h2><p>Total messages saved/exportable: ${messages.length}</p><p>After clicking Export TXT, Chrome will open a Save As window where you can choose the file name and folder.</p><p>Default filename: ${escapeHtml(exportFilename)}</p>${timestampFormatControls()}<button data-action="export">Export TXT</button><button class="danger" data-action="clear">Clear</button>${developerTools}`);
     } else {
       const disabled = hasRequiredDates() && !isReversedDateRange() ? "" : "disabled";
-      updateOverlayBody(body, `<h2>Confirm starting position</h2><p>After you click Start Recording, scroll manually through the DM. Messages are captured as Discord loads them.</p><p>For the cleanest log, start where you want the log to begin and scroll down until you reach the point where you want it to end.</p><p>${modeConfirmationText()}</p>${everythingNote}${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>`);
+      updateOverlayBody(body, `<h2>Confirm starting position</h2><p>After you click Start Recording, scroll manually through the DM. Messages are captured as Discord loads them.</p><p>For the cleanest log, start where you want the log to begin and scroll down until you reach the point where you want it to end.</p><p>${modeConfirmationText()}</p>${everythingNote}${range}${mapping}${displayNameWarning}${dateWarning}<button data-action="start" ${disabled}>Start Recording</button><button class="secondary" data-action="cancel">Cancel</button>${developerTools}`);
     }
+  }
+
+
+  function developerModeTools() {
+    if (!settings.developerMode) return "";
+    return `<section class="debug"><h3>Developer Mode</h3><p>Privacy-safe debug log enabled.</p><button class="secondary" data-action="copy-debug">Copy Debug Log</button><button class="secondary" data-action="download-debug">Download Debug Log</button></section>`;
+  }
+
+  function createDebugLog() {
+    return {
+      schema: "discord-dm-exporter-debug-v1",
+      createdAt: new Date().toISOString(),
+      settings: sanitizedSettingsSummary(),
+      browserTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
+      pathCategory: currentPathCategory(),
+      candidates: [],
+      unknownWarningState: {
+        unknownRetainedCount: 0,
+        unknownWarningAccepted: false,
+        warningVisible: false,
+        acceptUnknownClicked: 0
+      },
+      actions: {
+        startClicked: 0,
+        acceptUnknownClicked: 0,
+        exportClicked: 0,
+        stopClicked: 0,
+        copyDebugClicked: 0,
+        downloadDebugClicked: 0
+      }
+    };
+  }
+
+  function sanitizedSettingsSummary() {
+    return {
+      everythingMode: Boolean(settings.everythingMode),
+      startDate: settings.startDate || "",
+      endDate: settings.endDate || "",
+      timestampOption: settings.includeTimestamps ? "shown" : "hidden",
+      includeTimestamps: Boolean(settings.includeTimestamps),
+      developerMode: Boolean(settings.developerMode)
+    };
+  }
+
+  function currentPathCategory() {
+    const path = window.location.pathname || "";
+    if (/^\/channels\/@me\/\d{15,25}/.test(path)) return "dm";
+    if (/^\/channels\/@me/.test(path)) return "dm-list-or-loading";
+    if (/^\/channels\/\d{15,25}\//.test(path)) return "server-channel";
+    if (/^\/channels\//.test(path)) return "channels-other";
+    return "other";
+  }
+
+  function recordDebugAction(action) {
+    if (!settings.developerMode) return;
+    if (!debugLog || !debugLog.actions) debugLog = createDebugLog();
+    const key = `${action}Clicked`;
+    if (Object.prototype.hasOwnProperty.call(debugLog.actions, key)) debugLog.actions[key] += 1;
+    if (action === "acceptUnknown") {
+      debugLog.unknownWarningState.acceptUnknownClicked += 1;
+    }
+    updateDebugWarningState();
+  }
+
+  function updateDebugWarningState() {
+    if (!settings.developerMode) return;
+    if (!debugLog || !debugLog.unknownWarningState) debugLog = createDebugLog();
+    debugLog.settings = sanitizedSettingsSummary();
+    debugLog.browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
+    debugLog.pathCategory = currentPathCategory();
+    debugLog.unknownWarningState.unknownRetainedCount = unknownRetainedCount;
+    debugLog.unknownWarningState.unknownWarningAccepted = Boolean(unknownWarningAccepted);
+    debugLog.unknownWarningState.warningVisible = Boolean(unknownRetainedCount && !unknownWarningAccepted);
+  }
+
+  function recordCandidateDebug(parsed, { insideRange, acceptedIntoExport, skippedReason }) {
+    if (!settings.developerMode || !parsed?.debug) return;
+    updateDebugWarningState();
+    debugLog.candidates.push({
+      ...parsed.debug,
+      insideSelectedDateRange: Boolean(insideRange),
+      acceptedIntoExport: Boolean(acceptedIntoExport),
+      skippedReason: skippedReason || "none",
+      unknownReasonCode: parsed.speaker === "UNKNOWN" ? parsed.debug.inference.reasonCode : "none"
+    });
+    if (debugLog.candidates.length > 1000) debugLog.candidates.splice(0, debugLog.candidates.length - 1000);
+  }
+
+  function safeSpeakerLabel(speaker) {
+    if (speaker === settings.selfLabel) return "SELF";
+    if (speaker === settings.otherLabel) return "OTHER";
+    return "UNKNOWN";
+  }
+
+  function buildContinuationDiagnostics(node) {
+    const previousSpeakerExisted = Boolean(lastSpeaker && lastSpeaker !== "UNKNOWN");
+    const previousSpeakerNodeExists = Boolean(lastSpeakerNode && document.contains(lastSpeakerNode));
+    const hasVisibleAuthor = Boolean(getAuthor(node));
+    const sameGroup = Boolean(lastSpeakerNode && isSameMessageGroup(node, lastSpeakerNode));
+    const directNearAdjacency = Boolean(lastSpeakerNode && isAdjacentMessageRun(lastSpeakerNode, node));
+    const sharedParent = Boolean(lastSpeakerNode && node?.parentElement && node.parentElement === lastSpeakerNode.parentElement);
+    const boundaryDetected = Boolean(isLikelyBoundaryElement(node) || isLikelyBoundaryElement(lastSpeakerNode) || (lastSpeakerNode && hasBoundaryBetween(lastSpeakerNode, node)));
+    const visibleAuthorChange = Boolean(lastSpeakerNode && hasVisibleAuthorBetween(lastSpeakerNode, node));
+    let reasonCode = "no-previous-speaker";
+    if (!node) reasonCode = "missing-node";
+    else if (!previousSpeakerNodeExists) reasonCode = "missing-previous-node";
+    else if (!previousSpeakerExisted) reasonCode = "previous-unknown";
+    else if (hasVisibleAuthor) reasonCode = "visible-author-present";
+    else if (boundaryDetected) reasonCode = "boundary";
+    else if (sameGroup) reasonCode = "same-group";
+    else if (directNearAdjacency) reasonCode = "adjacent-run";
+    else if (visibleAuthorChange) reasonCode = "visible-author-between";
+    else if (sharedParent) reasonCode = "shared-parent";
+    else reasonCode = "no-continuation-evidence";
+    return {
+      previousSpeakerExisted,
+      previousSpeakerLabel: safeSpeakerLabel(lastSpeaker),
+      previousSpeakerNodeExists,
+      sameGroup,
+      directNearAdjacency,
+      sharedParent,
+      boundaryDetected,
+      visibleAuthorChange,
+      reasonCode
+    };
+  }
+
+  function debugLogText() {
+    updateDebugWarningState();
+    return JSON.stringify(debugLog || createDebugLog(), null, 2);
+  }
+
+  async function copyDebugLog() {
+    recordDebugAction("copyDebug");
+    try {
+      await navigator.clipboard.writeText(debugLogText());
+      showOverlayMessage("Debug log copied.");
+    } catch (error) {
+      showOverlayMessage(`Copy failed: ${error?.message || "unknown error"}`);
+    }
+  }
+
+  function downloadDebugLog() {
+    recordDebugAction("downloadDebug");
+    const blob = new Blob([debugLogText()], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `discord-dm-exporter-debug-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function updateOverlayBody(body, html) {
@@ -402,6 +559,8 @@
     if (!action) return;
     if (action === "start") {
       if (!canRecordNow() || isReversedDateRange()) { renderOverlay(); return; }
+      debugLog = createDebugLog();
+      recordDebugAction("start");
       totalSeen = 0;
       captureCounter = 0;
       messages = [];
@@ -420,6 +579,7 @@
       renderOverlay();
     }
     if (action === "stop") {
+      recordDebugAction("stop");
       await captureLoadedMessages({ reason: "end-recording" });
       stopMessageObserver();
       recordingState = "stopped";
@@ -433,8 +593,16 @@
     if (action === "cancel") {
       await resetRecordingSession({ clearMessages: false });
     }
-    if (action === "export") exportTranscript();
-    if (action === "accept-unknown") { unknownWarningAccepted = true; scheduleCapture(); renderOverlay(); }
+    if (action === "export") { recordDebugAction("export"); exportTranscript(); }
+    if (action === "accept-unknown") {
+      unknownWarningAccepted = true;
+      recordDebugAction("acceptUnknown");
+      updateDebugWarningState();
+      scheduleCapture();
+      renderOverlay();
+    }
+    if (action === "copy-debug") copyDebugLog();
+    if (action === "download-debug") downloadDebugLog();
   }
 
   async function resetRecordingSession({ clearMessages }) {
@@ -478,14 +646,20 @@
     let improvedExisting = false;
     parsedMessages.forEach((parsed) => {
       const key = messageKey(parsed, suspiciousStableIds);
+      let skippedReason = "none";
+      let acceptedIntoExport = false;
       if (!seenObservedKeys.has(key)) {
         seenObservedKeys.add(key);
         totalSeen += 1;
       }
       if (!settings.everythingMode && !parsed.isoDate) {
+        skippedReason = "missing-date";
+        recordCandidateDebug(parsed, { insideRange: false, acceptedIntoExport, skippedReason });
         return;
       }
       if (!settings.everythingMode && !isInsideRange(parsed.isoDate)) {
+        skippedReason = "outside-range";
+        recordCandidateDebug(parsed, { insideRange: false, acceptedIntoExport, skippedReason });
         return;
       }
       if (parsed.speaker === "UNKNOWN" && !unknownWarningAccepted) {
@@ -506,7 +680,11 @@
         captureCounter += 1;
         const savedMessage = { ...parsed, deduplicationKey: key, captureIndex: captureCounter };
         newMessages.push(savedMessage);
+        acceptedIntoExport = true;
+      } else {
+        acceptedIntoExport = true;
       }
+      recordCandidateDebug(parsed, { insideRange: settings.everythingMode || isInsideRange(parsed.isoDate), acceptedIntoExport, skippedReason });
     });
 
     if (newMessages.length || improvedExisting) {
@@ -750,18 +928,46 @@
     const contentMessageId = extractMessageContentId(contentNode);
     const id = contentMessageId ? `discord:${contentMessageId}` : getStableMessageId(node);
     const snowflake = contentMessageId || extractSnowflakeFromRecordId(id);
-    const timestamp = getOwnedTimestamp(node)?.getAttribute("datetime") || "";
+    const ownedTimestamp = getOwnedTimestamp(node);
+    const timestamp = ownedTimestamp?.getAttribute("datetime") || "";
     const exactDate = parseExactTimestamp(timestamp);
     const dividerDate = exactDate ? "" : findNearestDateDivider(node);
     const snowflakeDate = exactDate || dividerDate ? "" : isoDateFromSnowflake(snowflake);
     const isoDate = exactDate || dividerDate || snowflakeDate;
     const timestampSource = exactDate ? "datetime" : dividerDate ? "divider" : snowflakeDate ? "snowflake" : "unknown";
     const hasExactTimestamp = Boolean(exactDate);
+    const ownedContentNodes = getOwnedContentNodes(node);
+    const ownedMediaNodes = getOwnedMediaNodes(node);
+    const ownedVoiceNodes = getOwnedVoiceNodes(node);
     const authorText = getAuthor(node);
-    const speaker = authorText ? speakerFor(authorText) : inferContinuedSpeaker(node);
+    const authorSpeaker = authorText ? speakerFor(authorText) : "UNKNOWN";
+    const continuationDiagnostics = buildContinuationDiagnostics(node);
+    const inferredSpeaker = authorText ? "UNKNOWN" : inferContinuedSpeaker(node);
+    const speaker = authorText ? authorSpeaker : inferredSpeaker;
     const text = contentNode ? getMessageTextFromContentNode(contentNode) : getMessageText(node);
     const markers = getMarkers(node, speaker);
     const body = [text, ...markers].filter(Boolean).join("\n").trim();
+    const debug = settings.developerMode ? {
+      candidateIndex: domIndex,
+      normalizedCandidateTagName: String(node.tagName || "unknown").toLowerCase(),
+      stableIdPresent: Boolean(id),
+      hasMessageSpecificEvidence: hasMessageSpecificEvidence(node),
+      hasOwnedTimestamp: Boolean(ownedTimestamp),
+      hasOwnedContent: Boolean(ownedContentNodes.length),
+      ownedContentNodeCount: ownedContentNodes.length,
+      textLength: text.length,
+      hasOwnedMedia: Boolean(ownedMediaNodes.length),
+      ownedMediaCount: ownedMediaNodes.length,
+      hasOwnedVoice: Boolean(ownedVoiceNodes.length),
+      ownedVoiceCount: ownedVoiceNodes.length,
+      hasVisibleAuthor: Boolean(authorText),
+      authorMatched: safeSpeakerLabel(authorSpeaker),
+      inferredContinuedSpeaker: safeSpeakerLabel(inferredSpeaker),
+      finalSpeaker: safeSpeakerLabel(speaker),
+      timestampSource,
+      domRelationship: continuationDiagnostics.sharedParent ? "shared-parent" : "not-shared-parent",
+      inference: continuationDiagnostics
+    } : null;
     if (!body) {
       return null;
     }
@@ -776,7 +982,7 @@
     const effectiveIsoDate = isoDate || lastIsoDate;
     const fallbackDeduplicationKey = buildFallbackDeduplicationKey({ speaker, text: body, isoDate: effectiveIsoDate, hasExactTimestamp, markers });
     const key = id || fallbackDeduplicationKey;
-    return { id, deduplicationKey: key, fallbackDeduplicationKey, speaker, unknownSpeaker: speaker === "UNKNOWN", text: body, isoDate: effectiveIsoDate, timestampSource, hasExactTimestamp, domIndex };
+    return { id, deduplicationKey: key, fallbackDeduplicationKey, speaker, unknownSpeaker: speaker === "UNKNOWN", text: body, isoDate: effectiveIsoDate, timestampSource, hasExactTimestamp, domIndex, debug };
   }
 
   function mergeMessageRecord(existing, parsed) {
