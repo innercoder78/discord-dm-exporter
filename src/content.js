@@ -45,9 +45,9 @@
   let lastCaptureStartedAt = extensionState.lastCaptureStartedAt || 0;
   let lastOverlaySignature = extensionState.lastOverlaySignature || "";
   let exportFilename = defaultFilename();
-  let debugLog = createDebugLog();
-  let scanSequence = 0;
   const maxDebugCandidates = 1000;
+  let debugLog = null;
+  let scanSequence = 0;
   const minCaptureIntervalMs = 750;
 
   extensionState.showRecordingOverlayFromPopup = showRecordingOverlayFromPopup;
@@ -646,7 +646,7 @@
     if (!action) return;
     if (action === "start") {
       if (!canRecordNow() || isReversedDateRange()) { renderOverlay(); return; }
-      debugLog = createDebugLog();
+      debugLog = settings.developerMode ? createDebugLog() : null;
       recordDebugAction("start");
       totalSeen = 0;
       captureCounter = 0;
