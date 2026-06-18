@@ -28,8 +28,8 @@
   let skippedUnknownKeys = new Set();
   let totalSeen = 0;
   let captureCounter = 0;
-  let lastSpeaker = "UNKNOWN";
-  let lastSpeakerNode = null;
+  let lastKnownSpeaker = "UNKNOWN";
+  let lastKnownSpeakerNode = null;
   let lastIsoDate = "";
   let unknownWarningAccepted = false;
   let unknownRetainedCount = 0;
@@ -476,9 +476,29 @@
   }
 
   function buildContinuationDiagnostics(node) {
+    const continuation = evaluateContinuation(node);
+    return continuation.diagnostics;
+  }
+
+  function resetContinuationContext() {
+    lastKnownSpeaker = "UNKNOWN";
+    lastKnownSpeakerNode = null;
+  }
+
+  function rememberKnownSpeaker(speaker, node) {
+    if (!speaker || speaker === "UNKNOWN") return;
+    lastKnownSpeaker = speaker;
+    lastKnownSpeakerNode = node || null;
+  }
+
+  function candidateHasOwnedExportableEvidence(node) {
+    return Boolean(isValidMessageCandidate(node));
+  }
+
+  function evaluateContinuation(node) {
     const continuationNode = getContinuationNode(node);
-    const previousContinuationNode = getContinuationNode(lastSpeakerNode);
-    const previousSpeakerExisted = Boolean(lastSpeaker && lastSpeaker !== "UNKNOWN");
+    const previousContinuationNode = getContinuationNode(lastKnownSpeakerNode);
+    const previousSpeakerExisted = Boolean(lastKnownSpeaker && lastKnownSpeaker !== "UNKNOWN");
     const previousSpeakerNodeExists = Boolean(previousContinuationNode && document.contains(previousContinuationNode));
     const hasVisibleAuthor = Boolean(getAuthor(node));
     const sameGroup = Boolean(previousContinuationNode && isSameMessageGroup(continuationNode, previousContinuationNode));
@@ -486,30 +506,49 @@
     const sharedParent = Boolean(previousContinuationNode && continuationNode?.parentElement && continuationNode.parentElement === previousContinuationNode.parentElement);
     const boundaryDetected = Boolean(isLikelyBoundaryElement(continuationNode) || isLikelyBoundaryElement(previousContinuationNode) || (previousContinuationNode && hasBoundaryBetween(previousContinuationNode, continuationNode)));
     const visibleAuthorChange = Boolean(previousContinuationNode && hasVisibleAuthorBetween(previousContinuationNode, continuationNode));
-    let reasonCode = "no-previous-speaker";
+    const hasCandidateEvidence = candidateHasOwnedExportableEvidence(node);
+    let reasonCode = "no-continuation-evidence";
+    let inferredSpeaker = "UNKNOWN";
+    let usedScanOrderFallback = false;
+
     if (!node) reasonCode = "missing-node";
-    else if (!previousSpeakerNodeExists) reasonCode = "missing-previous-node";
-    else if (!previousSpeakerExisted) reasonCode = "previous-unknown";
-    else if (hasVisibleAuthor) reasonCode = "visible-author-present";
-    else if (boundaryDetected) reasonCode = "boundary";
-    else if (sameGroup) reasonCode = "same-group";
-    else if (directNearAdjacency) reasonCode = "adjacent-run";
-    else if (visibleAuthorChange) reasonCode = "visible-author-between";
-    else if (sharedParent) reasonCode = "shared-parent";
-    else reasonCode = "no-continuation-evidence";
+    else if (hasVisibleAuthor) reasonCode = "visible-author";
+    else if (!previousSpeakerExisted) reasonCode = "no-continuation-evidence";
+    else if (boundaryDetected) reasonCode = "blocked-boundary";
+    else if (visibleAuthorChange) reasonCode = "blocked-visible-author-change";
+    else if (previousSpeakerNodeExists && sameGroup) {
+      inferredSpeaker = lastKnownSpeaker;
+      reasonCode = "dom-same-group";
+    } else if (previousSpeakerNodeExists && directNearAdjacency) {
+      inferredSpeaker = lastKnownSpeaker;
+      reasonCode = "dom-adjacent-run";
+    } else if (previousSpeakerNodeExists && sharedParent) {
+      inferredSpeaker = lastKnownSpeaker;
+      reasonCode = "dom-shared-parent";
+    } else if (hasCandidateEvidence) {
+      inferredSpeaker = lastKnownSpeaker;
+      reasonCode = "scan-order-fallback";
+      usedScanOrderFallback = true;
+    }
+
     return {
-      previousSpeakerExisted,
-      previousSpeakerLabel: safeSpeakerLabel(lastSpeaker),
-      previousSpeakerNodeExists,
-      continuationNodeTagName: String(continuationNode?.tagName || "unknown").toLowerCase(),
-      previousContinuationNodeTagName: String(previousContinuationNode?.tagName || "unknown").toLowerCase(),
-      hasOuterMessageContainer: Boolean(continuationNode && continuationNode !== node),
-      sameGroup,
-      directNearAdjacency,
-      sharedParent,
-      boundaryDetected,
-      visibleAuthorChange,
-      reasonCode
+      speaker: inferredSpeaker,
+      diagnostics: {
+        previousSpeakerExisted,
+        previousSpeakerLabel: safeSpeakerLabel(lastKnownSpeaker),
+        previousSpeakerNodeExists,
+        continuationNodeTagName: String(continuationNode?.tagName || "unknown").toLowerCase(),
+        previousContinuationNodeTagName: String(previousContinuationNode?.tagName || "unknown").toLowerCase(),
+        hasOuterMessageContainer: Boolean(continuationNode && continuationNode !== node),
+        sameGroup,
+        directNearAdjacency,
+        sharedParent,
+        boundaryDetected,
+        visibleAuthorChange,
+        hasCandidateEvidence,
+        usedScanOrderFallback,
+        reasonCode
+      }
     };
   }
 
@@ -572,8 +611,7 @@
       seenKeys.clear();
       seenObservedKeys.clear();
       skippedUnknownKeys.clear();
-      lastSpeaker = "UNKNOWN";
-      lastSpeakerNode = null;
+      resetContinuationContext();
       lastIsoDate = "";
       unknownWarningAccepted = false;
       unknownRetainedCount = 0;
@@ -620,8 +658,7 @@
     recordingState = "idle";
     totalSeen = 0;
     captureCounter = 0;
-    lastSpeaker = "UNKNOWN";
-    lastSpeakerNode = null;
+    resetContinuationContext();
     lastIsoDate = "";
     unknownWarningAccepted = false;
     unknownRetainedCount = 0;
@@ -847,20 +884,6 @@
       .filter((voiceNode) => ownsDescendant(node, voiceNode) && !isReplyPreviewElement(voiceNode));
   }
 
-  function inferContinuedSpeaker(node) {
-    const continuationNode = getContinuationNode(node);
-    const previousContinuationNode = getContinuationNode(lastSpeakerNode);
-    if (!continuationNode || !previousContinuationNode || lastSpeaker === "UNKNOWN") return "UNKNOWN";
-    if (getAuthor(node)) return "UNKNOWN";
-    if (isLikelyBoundaryElement(continuationNode) || isLikelyBoundaryElement(previousContinuationNode)) return "UNKNOWN";
-    if (hasBoundaryBetween(previousContinuationNode, continuationNode)) return "UNKNOWN";
-    if (hasVisibleAuthorBetween(previousContinuationNode, continuationNode)) return "UNKNOWN";
-    if (isSameMessageGroup(continuationNode, previousContinuationNode)) return lastSpeaker;
-    if (isAdjacentMessageRun(previousContinuationNode, continuationNode)) return lastSpeaker;
-    if (shareImmediateListParent(previousContinuationNode, continuationNode)) return lastSpeaker;
-    return "UNKNOWN";
-  }
-
   function isSameMessageGroup(a, b) {
     const groupA = closestMessageGroup(getContinuationNode(a));
     const groupB = closestMessageGroup(getContinuationNode(b));
@@ -976,8 +999,9 @@
     const continuationNode = getContinuationNode(node);
     const authorText = getAuthor(node);
     const authorSpeaker = authorText ? speakerFor(authorText) : "UNKNOWN";
-    const continuationDiagnostics = buildContinuationDiagnostics(node);
-    const inferredSpeaker = authorText ? "UNKNOWN" : inferContinuedSpeaker(node);
+    const continuation = evaluateContinuation(node);
+    const continuationDiagnostics = continuation.diagnostics;
+    const inferredSpeaker = authorText ? "UNKNOWN" : continuation.speaker;
     const speaker = authorText ? authorSpeaker : inferredSpeaker;
     const text = contentNode ? getMessageTextFromContentNode(contentNode) : getMessageText(node);
     const markers = getMarkers(node, speaker);
@@ -1002,6 +1026,8 @@
       inferredContinuedSpeaker: safeSpeakerLabel(inferredSpeaker),
       finalSpeaker: safeSpeakerLabel(speaker),
       timestampSource,
+      inferenceMethod: authorText ? "visible-author" : continuationDiagnostics.reasonCode,
+      usedScanOrderFallback: Boolean(continuationDiagnostics.usedScanOrderFallback),
       domRelationship: continuationDiagnostics.sharedParent ? "shared-parent" : "not-shared-parent",
       inference: continuationDiagnostics
     } : null;
@@ -1009,11 +1035,9 @@
       return null;
     }
     if (speaker && speaker !== "UNKNOWN") {
-      lastSpeaker = speaker;
-      lastSpeakerNode = continuationNode || node;
-    } else {
-      lastSpeaker = "UNKNOWN";
-      lastSpeakerNode = null;
+      rememberKnownSpeaker(speaker, continuationNode || node);
+    } else if (authorText || continuationDiagnostics.boundaryDetected || continuationDiagnostics.visibleAuthorChange) {
+      resetContinuationContext();
     }
     if (isoDate) lastIsoDate = isoDate;
     const effectiveIsoDate = isoDate || lastIsoDate;
