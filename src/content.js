@@ -46,6 +46,8 @@
   let lastOverlaySignature = extensionState.lastOverlaySignature || "";
   let exportFilename = defaultFilename();
   let debugLog = createDebugLog();
+  let scanSequence = 0;
+  const maxDebugCandidates = 1000;
   const minCaptureIntervalMs = 750;
 
   init();
@@ -392,6 +394,7 @@
   function createDebugLog() {
     return {
       schema: "discord-dm-exporter-debug-v1",
+      maxCandidateEntries: maxDebugCandidates,
       createdAt: new Date().toISOString(),
       settings: sanitizedSettingsSummary(),
       browserTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
@@ -456,17 +459,53 @@
     debugLog.unknownWarningState.warningVisible = Boolean(unknownRetainedCount && !unknownWarningAccepted);
   }
 
-  function recordCandidateDebug(parsed, { insideRange, acceptedIntoExport, skippedReason }) {
+  function recordCandidateDebug(parsed, { insideRange, acceptedIntoExport, skippedReason, scanPass }) {
     if (!settings.developerMode || !parsed?.debug) return;
     updateDebugWarningState();
     debugLog.candidates.push({
+      scanSequence: scanPass,
       ...parsed.debug,
+      ...dateRangeDiagnostics(parsed),
       insideSelectedDateRange: Boolean(insideRange),
       acceptedIntoExport: Boolean(acceptedIntoExport),
       skippedReason: skippedReason || "none",
       unknownReasonCode: parsed.speaker === "UNKNOWN" ? parsed.debug.inference.reasonCode : "none"
     });
-    if (debugLog.candidates.length > 1000) debugLog.candidates.splice(0, debugLog.candidates.length - 1000);
+    if (debugLog.candidates.length > maxDebugCandidates) debugLog.candidates.splice(0, debugLog.candidates.length - maxDebugCandidates);
+  }
+
+  function dateRangeDiagnostics(parsed) {
+    const candidateLocalDay = localCalendarDay(parsed?.isoDate);
+    const rangeStartDay = settings.startDate || "";
+    const rangeEndDay = settings.endDate || "";
+    return {
+      candidateDatePresent: Boolean(candidateLocalDay),
+      candidateDateSource: candidateDateSource(parsed?.timestampSource),
+      candidateLocalDay,
+      rangeStartDay,
+      rangeEndDay,
+      dateRangeComparison: dateRangeComparison(candidateLocalDay, rangeStartDay, rangeEndDay)
+    };
+  }
+
+  function candidateDateSource(source) {
+    return ["datetime", "divider", "snowflake"].includes(source) ? source : "unknown";
+  }
+
+  function dateRangeComparison(candidateLocalDay, rangeStartDay, rangeEndDay) {
+    if (settings.everythingMode) return "everything-mode";
+    if (!rangeStartDay || !rangeEndDay) return "missing-range";
+    if (!candidateLocalDay) return "missing-candidate-date";
+    if (candidateLocalDay < rangeStartDay) return "before-range";
+    if (candidateLocalDay > rangeEndDay) return "after-range";
+    return "inside-range";
+  }
+
+  function localCalendarDay(isoDate) {
+    if (!isoDate) return "";
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) return "";
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
   }
 
   function safeSpeakerLabel(speaker) {
@@ -679,6 +718,8 @@
     if (recordingState !== "recording" && !canCaptureStoppedPage) return;
     if (!canRecordNow()) return;
     const nodes = findLoadedMessageCandidates();
+    const currentScanSequence = settings.developerMode ? scanSequence + 1 : 0;
+    if (settings.developerMode) scanSequence = currentScanSequence;
     const newMessages = [];
     const parsedMessages = nodes
       .map((node, domIndex) => parseMessage(node, domIndex))
@@ -696,12 +737,12 @@
       }
       if (!settings.everythingMode && !parsed.isoDate) {
         skippedReason = "missing-date";
-        recordCandidateDebug(parsed, { insideRange: false, acceptedIntoExport, skippedReason });
+        recordCandidateDebug(parsed, { insideRange: false, acceptedIntoExport, skippedReason, scanPass: currentScanSequence });
         return;
       }
       if (!settings.everythingMode && !isInsideRange(parsed.isoDate)) {
         skippedReason = "outside-range";
-        recordCandidateDebug(parsed, { insideRange: false, acceptedIntoExport, skippedReason });
+        recordCandidateDebug(parsed, { insideRange: false, acceptedIntoExport, skippedReason, scanPass: currentScanSequence });
         return;
       }
       if (parsed.speaker === "UNKNOWN" && !unknownWarningAccepted) {
@@ -726,7 +767,7 @@
       } else {
         acceptedIntoExport = true;
       }
-      recordCandidateDebug(parsed, { insideRange: settings.everythingMode || isInsideRange(parsed.isoDate), acceptedIntoExport, skippedReason });
+      recordCandidateDebug(parsed, { insideRange: settings.everythingMode || isInsideRange(parsed.isoDate), acceptedIntoExport, skippedReason, scanPass: currentScanSequence });
     });
 
     if (newMessages.length || improvedExisting) {
