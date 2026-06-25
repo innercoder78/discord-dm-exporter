@@ -365,7 +365,7 @@
     const body = overlay.querySelector("[data-body]");
     const status = dmStatus();
     if (!status.ok) {
-      updateOverlayBody(body, `<h2>Discord DM Log Exporter</h2><p>${unsupportedText}</p><p class="warn">${dmErrorText(status.reason)}</p>`);
+      updateOverlayBody(body, `<h2>Discord DM Exporter</h2><p>${unsupportedText}</p><p class="warn">${dmErrorText(status.reason)}</p>`);
       return;
     }
 
