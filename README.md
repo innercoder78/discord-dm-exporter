@@ -1,6 +1,6 @@
-# Discord DM Log Exporter
+# Discord DM Exporter
 
-Discord DM Log Exporter is a local-only Chrome extension for saving one-on-one Discord Web direct messages as a clean `.txt` file.
+Discord DM Exporter is a local-only Chrome extension for saving one-on-one Discord Web direct messages as a clean `.txt` file.
 
 It is designed for personal use in Chrome. It does not upload your messages anywhere.
 
